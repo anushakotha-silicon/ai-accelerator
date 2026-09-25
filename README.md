@@ -4,15 +4,18 @@ An LLM inference accelerator designed for perf/W, built workload-first: first
 chat inference, then agentic AI (long, growing contexts, tool-call pauses,
 structured outputs).
 
-**Phase 1 (this repo today):** an architecture spec and an analytical
-performance and energy model that justifies every block before any RTL gets written.
+**Phase 1:** an architecture spec and an analytical performance and energy model
+that justifies every block before any RTL gets written.
+**Phase 2 (in progress):** RTL for one compute tile, verified against a golden model.
 
 | | |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The chip: blocks, memory hierarchy, numerics, agentic features, design decisions D1–D8 |
 | [results/report.md](results/report.md) | Generated tables: chat, agentic, energy breakdown, ablations, design sweep |
 | [results/node_study.md](results/node_study.md) | 5nm vs 3nm variants, DVFS/power gating, levers, scored on a 7-workload suite |
-| [docs/package-3d.html](docs/package-3d.html) | Interactive 3D package and floorplan (open in a browser) |
+| [docs/package-3d.html](docs/package-3d.html) | Interactive 3D package and floorplan, v0.1 and v0.2 (open in a browser) |
+| [docs/PHASE2.md](docs/PHASE2.md) | Tile RTL plan and the systolic-array design notes |
+| `rtl/`, `tb/`, `Makefile` | Phase 2 RTL: systolic array with wavefront weight loading, golden model, testbench |
 | `model/hw.py` | Chip config + energy table (every assumption lives here) |
 | `model/workloads.py` | Llama-3.1 8B/70B, Mixtral 8x7B, chat and agent profiles |
 | `model/engine.py` | Cost of one decode step / one prefill: time, bound, energy by component |

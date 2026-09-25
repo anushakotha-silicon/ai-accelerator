@@ -290,7 +290,7 @@ TPU's SparseCore); nothing on this chip is designed for that yet.
 | 1 ✅ | This spec + analytical model | Python |
 | 1b ✅ | 3nm variant, DVFS + power gating, workload suite, resolve D3 (section 10) | Python |
 | 1c | Multi-chip (tensor-parallel 405B), cost per die, sparse-gather engine for recommendation models | Python |
-| 2 | RTL: 1 tile (systolic array + MX dequant + scratchpad + sequencer), testbench vs NumPy golden | SystemVerilog, Verilator, cocotb |
+| 2 (in progress) | RTL: 1 tile (systolic array + MX dequant + scratchpad + sequencer), testbench vs NumPy golden | SystemVerilog, Verilator, cocotb |
 | 3 | Synthesis area/power of the tile on an open PDK; recalibrate section 8 | Yosys, OpenROAD, SKY130/GF180 |
 | 4 | Multi-tile + NoC + RISC-V control core, run a real 1-layer transformer in simulation | Verilator, CVA6/Rocket |
 | 5 | Tiny Tapeout / shuttle test chip of one scaled-down tile | OpenLane |

@@ -352,22 +352,22 @@ section > p { margin: 0 0 12px; color: var(--muted); max-width: 68ch; font-size:
 
 <div class="wrap">
   <header class="head">
-    <p class="eyebrow">Phase 1 · physical concept · 5nm-class</p>
+    <p class="eyebrow" id="eyebrow">Physical concept</p>
     <h1>IA-1 inference accelerator package</h1>
-    <p class="lede">A 442 mm² compute die with four HBM3E stacks on a silicon interposer, plus eight LPDDR5X packages on the substrate for agent KV cache. Click any block to see its function, area and the power the model assigns to it. Turn on the heat map to compare decode, which is memory-bound, with prefill, which is compute-bound.</p>
-    <dl class="specs">
-      <div><dt>Die</dt><dd>26 × 17 mm · 442 mm²</dd></div>
-      <div><dt>Peak</dt><dd>1,258 TFLOPS FP8</dd></div>
-      <div><dt>HBM3E</dt><dd>4 × 36 GB · 4.8 TB/s</dd></div>
-      <div><dt>LPDDR5X</dt><dd>8 × 32 GB · 0.5 TB/s</dd></div>
-      <div><dt>Interposer</dt><dd>34 × 44 mm</dd></div>
-      <div><dt>TDP</dt><dd>350 W</dd></div>
-    </dl>
+    <p class="lede">A compute die with four HBM3E stacks on a silicon interposer, plus eight LPDDR5X packages on the substrate for agent KV cache. Switch between v0.1 (5nm, 32 tiles) and v0.2 (3nm, 48 tiles, the current recommendation). Click any block to see its function, area and the power the model assigns to it. Turn on the heat map to compare decode, which is memory-bound, with prefill, which is compute-bound.</p>
+    <dl class="specs" id="specs"></dl>
   </header>
 
   <div class="viewer">
     <div class="main">
       <div class="toolbar" role="toolbar" aria-label="Viewer controls">
+        <div class="ctl">
+          <span class="ctl-label" id="design-l">Design</span>
+          <div class="seg" role="group" aria-labelledby="design-l">
+            <button type="button" data-design="v01" aria-pressed="false">v0.1 · 5nm</button>
+            <button type="button" data-design="v02" aria-pressed="true">v0.2 · 3nm</button>
+          </div>
+        </div>
         <div class="ctl">
           <span class="ctl-label" id="view-l">View</span>
           <div class="seg" role="group" aria-labelledby="view-l">
@@ -392,7 +392,7 @@ section > p { margin: 0 0 12px; color: var(--muted); max-width: 68ch; font-size:
         <div class="legend" id="legend" hidden>
           <div class="legend-title" id="legend-title">Power density</div>
           <div class="legend-bar" id="legend-bar"></div>
-          <div class="legend-ticks"><span>0</span><span>0.4</span><span>0.8</span><span>1.2</span><span>1.6 W/mm²</span></div>
+          <div class="legend-ticks"><span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0 W/mm²</span></div>
         </div>
         <div class="hint">Drag to orbit · scroll or pinch to zoom · right-drag to pan · click a block</div>
       </div>
@@ -409,7 +409,7 @@ section > p { margin: 0 0 12px; color: var(--muted); max-width: 68ch; font-size:
   <div class="lower">
     <section>
       <h2>Die area budget</h2>
-      <p>Block areas are estimates for a 5nm-class node. Power comes from the analytical model, split across blocks: 70B decode at batch 64 draws 293 W for the package, and a 4k-token prefill draws 205 W.</p>
+      <p id="budget-note"></p>
       <div class="tbl-wrap"><table class="budget" id="budget"></table></div>
     </section>
     <section>
@@ -421,7 +421,7 @@ section > p { margin: 0 0 12px; color: var(--muted); max-width: 68ch; font-size:
         <li><span>Compute die, thinned, flip-chip</span><span>0.72 mm</span><small>The active side faces down. The floorplan is drawn on the top face so you can see it.</small></li>
         <li><span>HBM3E 12-high stack</span><span>0.72 mm</span><small>Base logic die plus 12 × 24 Gb DRAM dies connected by TSVs</small></li>
         <li><span>Microbumps, Cu pillar</span><span>~40 µm pitch</span></li>
-        <li><span>Silicon interposer with TSVs</span><span>0.1 mm</span><small>34 × 44 mm is 1.74× the 858 mm² reticle, so it needs stitching or bridges (CoWoS-L class).</small></li>
+        <li><span>Silicon interposer with TSVs</span><span>0.1 mm</span><small id="stack-interposer"></small></li>
         <li><span>C4 bumps</span><span>~150 µm pitch</span></li>
         <li><span>Organic build-up substrate</span><span>~1.6 mm</span><small>90 × 70 mm. Carries the LPDDR5X packages and decoupling capacitors.</small></li>
         <li><span>BGA solder balls</span><span>1.0 mm pitch</span></li>
@@ -443,61 +443,85 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 /* ------------------------------------------------------------------ *
- * Geometry (millimetres). World: x east, z south, y up.              *
+ * Shared geometry (millimetres). World: x east, z south, y up.        *
  * ------------------------------------------------------------------ */
 const VZ = 3;                          // vertical exaggeration
-const DIE = { w: 26, h: 17 };
 const IX = 8;                          // die + interposer centre x
-const INTERPOSER = { w: 34, d: 44 };
 const SUBSTRATE = { w: 90, d: 70 };
-const H = {
-  sub: 1.6 * VZ, c4: 0.1 * VZ, int: 0.1 * VZ, ub: 0.03 * VZ,
-  die: 0.72 * VZ, blk: 0.025 * VZ, lp: 0.9 * VZ, ring: 1.0 * VZ, lid: 1.0 * VZ,
-};
+const H = { sub: 1.6 * VZ, c4: 0.1 * VZ, int: 0.1 * VZ, ub: 0.03 * VZ, die: 0.72 * VZ, blk: 0.025 * VZ, lp: 0.9 * VZ, ring: 1.0 * VZ, lid: 1.0 * VZ };
 const Y = {};
-Y.subTop = H.sub;
-Y.int0 = Y.subTop + H.c4;
-Y.intTop = Y.int0 + H.int;
-Y.die0 = Y.intTop + H.ub;
-Y.dieTop = Y.die0 + H.die;
+Y.subTop = H.sub; Y.int0 = Y.subTop + H.c4; Y.intTop = Y.int0 + H.int; Y.die0 = Y.intTop + H.ub; Y.dieTop = Y.die0 + H.die;
+const PHY_SHARE = 0.32;                // share of HBM access energy spent on-die (PHY + controller)
+const HEAT_MAX = 2.0;
+const RETICLE = 858;
 
 /* ------------------------------------------------------------------ *
- * Power: component watts from model/engine.py (Llama-3.1-70B).        *
+ * Design versions. Power: component watts from model/engine.py.       *
  * ------------------------------------------------------------------ */
-const MODEL = {
-  decode:  { label: 'Decode',  note: '70B, batch 64, 1.3k context', mac: 89.8,  attn: 3.5, vector: 0.2, sram: 14.1, noc: 3.5, hbm: 122.0, static: 60 },
-  prefill: { label: 'Prefill', note: '70B, 4,096-token prompt',     mac: 132.6, attn: 0.0, vector: 0.4, sram: 10.1, noc: 0.1, hbm: 2.0,   static: 60 },
+const CONFIGS = {
+  v01: {
+    key: 'v01', short: 'v0.1', node: '5nm-class', eyebrow: 'v0.1 · 5nm-class · 32 tiles',
+    die: { w: 26, h: 17 }, tileW: 2.7, tileH: 2.7, cols: 8, tx0: 2.2, rows: [1.9, 4.6, 9.7, 12.4],
+    tileSub: [
+      { kind: 'array', x: 0.1, y: 0.1, w: 1.7, h: 1.7 },
+      { kind: 'sram', x: 1.9, y: 0.1, w: 0.7, h: 2.5 },
+      { kind: 'vector', x: 0.1, y: 1.9, w: 1.1, h: 0.6 },
+      { kind: 'router', x: 1.3, y: 1.9, w: 0.5, h: 0.6 },
+    ],
+    blocks: [
+      { kind: 'hbmphy', idx: 0, x: 1.5, y: 15.3, w: 11, h: 1.7 }, { kind: 'hbmphy', idx: 1, x: 13.5, y: 15.3, w: 11, h: 1.7 },
+      { kind: 'hbmphy', idx: 2, x: 1.5, y: 0, w: 11, h: 1.7 },    { kind: 'hbmphy', idx: 3, x: 13.5, y: 0, w: 11, h: 1.7 },
+      { kind: 'control', x: 2.2, y: 7.4, w: 5.3, h: 2.2 }, { kind: 'kv', x: 7.6, y: 7.4, w: 5.3, h: 2.2 },
+      { kind: 'dma', x: 13.0, y: 7.4, w: 5.3, h: 2.2 },    { kind: 'system', x: 18.4, y: 7.4, w: 5.3, h: 2.2 },
+      { kind: 'lpddrphy', x: 0.3, y: 1.9, w: 1.7, h: 13.2 },
+      { kind: 'pcie', x: 24.0, y: 1.9, w: 1.7, h: 5.4 }, { kind: 'c2c', x: 24.0, y: 7.5, w: 1.7, h: 7.6 },
+    ],
+    interposer: { w: 34, d: 44 }, hbmX: 6, hbmZ: 14.5, mesh: '8 × 4', hops: 2.8,
+    peak: { fp8: 1258, fp4: 2517 }, areaModel: 442,
+    power: {
+      decode:  { label: 'Decode',  v: 0.75, opp: '0.75 V · 1.2 GHz (no DVFS)', note: '70B, batch 64, 1.3k context', mac: 89.81, attn: 3.47, vector: 0.20, sram: 14.11, noc: 3.46, hbm: 122.0, tileStatic: 40.0 },
+      prefill: { label: 'Prefill', v: 0.75, opp: '0.75 V · 1.2 GHz', note: '70B, 4,096-token prompt', mac: 132.63, attn: 0, vector: 0.40, sram: 10.05, noc: 0.07, hbm: 2.02, tileStatic: 40.0 },
+    },
+    fixed: { hbm: 12, lpddr: 3, die: 5 },
+  },
+  v02: {
+    key: 'v02', short: 'v0.2', node: '3nm-class (N3E)', eyebrow: 'v0.2 · 3nm-class · 48 tiles · recommended',
+    die: { w: 25.0, h: 18.4 }, tileW: 2.6, tileH: 2.12, cols: 8, tx0: 2.1, rows: [1.9, 4.02, 6.14, 10.2, 12.32, 14.44],
+    tileSub: [
+      { kind: 'array', x: 0.08, y: 0.08, w: 1.344, h: 1.344 },
+      { kind: 'sram', x: 1.55, y: 0.08, w: 0.9, h: 1.95 },
+      { kind: 'vector', x: 0.08, y: 1.5, w: 1.344, h: 0.3 },
+      { kind: 'router', x: 0.08, y: 1.84, w: 0.95, h: 0.2 },
+    ],
+    blocks: [
+      { kind: 'hbmphy', idx: 0, x: 1.2, y: 16.7, w: 11, h: 1.7 }, { kind: 'hbmphy', idx: 1, x: 12.8, y: 16.7, w: 11, h: 1.7 },
+      { kind: 'hbmphy', idx: 2, x: 1.2, y: 0, w: 11, h: 1.7 },    { kind: 'hbmphy', idx: 3, x: 12.8, y: 0, w: 11, h: 1.7 },
+      { kind: 'control', x: 2.1, y: 8.3, w: 5.1, h: 1.8 }, { kind: 'kv', x: 7.3, y: 8.3, w: 5.1, h: 1.8 },
+      { kind: 'dma', x: 12.5, y: 8.3, w: 5.1, h: 1.8 },    { kind: 'system', x: 17.7, y: 8.3, w: 5.1, h: 1.8 },
+      { kind: 'lpddrphy', x: 0.2, y: 2.6, w: 1.7, h: 13.2 },
+      { kind: 'pcie', x: 23.1, y: 1.9, w: 1.7, h: 5.4 }, { kind: 'c2c', x: 23.1, y: 8.9, w: 1.7, h: 7.6 },
+    ],
+    interposer: { w: 31, d: 45 }, hbmX: 5.8, hbmZ: 15.2, mesh: '8 × 6', hops: 3.5,
+    peak: { fp8: 1887, fp4: 3775 }, areaModel: 447,
+    power: {
+      decode:  { label: 'Decode',  v: 0.60, opp: '0.60 V · 0.8 GHz (DVFS)', note: '70B, batch 64 · DVFS at 0.60 V / 0.8 GHz', mac: 39.09, attn: 1.51, vector: 0.09, sram: 7.68, noc: 2.31, hbm: 122.0, tileStatic: 19.57 },
+      prefill: { label: 'Prefill', v: 0.75, opp: '0.75 V · 1.2 GHz', note: '70B, 4,096-token prompt · nominal 0.75 V', mac: 135.27, attn: 0, vector: 0.41, sram: 12.82, noc: 0.11, hbm: 3.04, tileStatic: 48.0 },
+    },
+    fixed: { hbm: 8, lpddr: 2, die: 7 },
+  },
 };
-const STATIC = { die: 45, hbm: 12, lpddr: 3 };   // split of the 60 W static budget
-const PHY_SHARE = 0.32;                          // share of HBM access energy spent on-die (PHY + controller)
-const DIE_AREA = DIE.w * DIE.h;
-const DIE_STATIC_D = STATIC.die / DIE_AREA;      // W/mm²
-const HEAT_MAX = 1.6;
+for (const c of Object.values(CONFIGS)) {
+  c.tiles = c.cols * c.rows.length;
+  c.dieArea = c.die.w * c.die.h;
+  c.tileArea = c.tileW * c.tileH;
+  c.nonTileArea = c.dieArea - c.tiles * c.tileArea;
+  const a = c.tileSub.find(t => t.kind === 'array');
+  c.peUm2 = (a.w * a.h * 1e6) / 16384;
+}
 
 /* ------------------------------------------------------------------ *
  * Block catalogue                                                     *
  * ------------------------------------------------------------------ */
-const TILE = 2.7, TX0 = 2.2, ROWS = [1.9, 4.6, 9.7, 12.4];
-const TILE_SUB = [
-  { kind: 'array',  x: 0.1, y: 0.1, w: 1.7, h: 1.7 },
-  { kind: 'sram',   x: 1.9, y: 0.1, w: 0.7, h: 2.5 },
-  { kind: 'vector', x: 0.1, y: 1.9, w: 1.1, h: 0.6 },
-  { kind: 'router', x: 1.3, y: 1.9, w: 0.5, h: 0.6 },
-];
-const DIE_BLOCKS = [
-  { kind: 'hbmphy',   idx: 0, x: 1.5,  y: 15.3, w: 11,  h: 1.7 },
-  { kind: 'hbmphy',   idx: 1, x: 13.5, y: 15.3, w: 11,  h: 1.7 },
-  { kind: 'hbmphy',   idx: 2, x: 1.5,  y: 0,    w: 11,  h: 1.7 },
-  { kind: 'hbmphy',   idx: 3, x: 13.5, y: 0,    w: 11,  h: 1.7 },
-  { kind: 'control',  x: 2.2,  y: 7.4, w: 5.3, h: 2.2 },
-  { kind: 'kv',       x: 7.6,  y: 7.4, w: 5.3, h: 2.2 },
-  { kind: 'dma',      x: 13.0, y: 7.4, w: 5.3, h: 2.2 },
-  { kind: 'system',   x: 18.4, y: 7.4, w: 5.3, h: 2.2 },
-  { kind: 'lpddrphy', x: 0.3,  y: 1.9, w: 1.7, h: 13.2 },
-  { kind: 'pcie',     x: 24.0, y: 1.9, w: 1.7, h: 5.4 },
-  { kind: 'c2c',      x: 24.0, y: 7.5, w: 1.7, h: 7.6 },
-];
-
 const KIND = {
   array:    { color: '#4F6BD8', group: 'Compute tile', name: 'Systolic array, 128 × 128' },
   sram:     { color: '#2FA39A', group: 'Compute tile', name: 'Scratchpad SRAM, 4 MB' },
@@ -524,143 +548,159 @@ const KIND = {
   lid:      { color: '#C7CCD3', group: 'Package', name: 'Lid' },
 };
 
-/* Per-kind description, facts and design rationale. */
-const INFO = {
-  array: {
-    desc: 'Weight-stationary array of 16,384 processing elements. Weight blocks are double-buffered, so the next 128 × 128 block loads while activations stream through the current one.',
-    facts: [['Formats', 'FP4×FP8, FP8, BF16 · FP32 accumulate'], ['Peak per tile', '39.3 TFLOPS FP8 · 78.6 FP4'], ['Weight port', '256 B/cycle = 307 GB/s'], ['Area / PE', '≈176 µm²']],
-    why: 'Prefill and agent turns are compute-bound (D3). The 256 B/cycle weight port gives 9.8 TB/s across the chip, 2× the break-even rate, so decode stays limited by HBM rather than by weight feed.',
-  },
-  sram: {
-    desc: 'Software-managed scratchpad with no cache tags. Holds weight blocks in flight, and during prefill it holds one layer of K/V so flash-style attention reads HBM only once.',
-    facts: [['Organisation', '16 banks × 256 KB'], ['Bandwidth', '≈1.2 TB/s per tile (planned)'], ['Density', '≈19 Mb/mm² incl. periphery'], ['Access energy', '0.8 pJ/byte']],
-    why: 'Each HBM byte costs 30 pJ and each SRAM byte 0.8 pJ. Reusing data on-chip is what makes prefill 65% MAC energy and only 1% HBM energy.',
-  },
-  vector: {
-    desc: 'Narrow dot-product engine for decode attention, plus FP32 elementwise work: softmax exponentials, norms, RoPE, and MX dequantisation.',
-    facts: [['Dot product', '1,024 FP8 MAC/cycle = 2.5 TFLOPS'], ['Elementwise', '512 FP32 op/cycle'], ['Energy', '0.40 pJ/MAC · 1.0 pJ/op']],
-    why: 'Decode attention is matrix-vector. On a 128 × 128 array it would use 4 of 128 rows, so a separate engine runs it at full utilisation.',
-  },
-  router: {
-    desc: 'Node in the 8 × 4 mesh network. Multicast broadcasts weights; in-network reduction handles all-reduce. The sequencer runs per-layer micro-programs and clock-gates idle units.',
-    facts: [['Topology', '8 × 4 2D mesh'], ['Mean hops', '2.8 (√32 / 2)'], ['Energy', '0.3 pJ/byte/hop']],
-    why: 'Sequencing layers in hardware keeps the per-layer barrier near 0.5 µs, which is 40 µs per decode step on an 80-layer model.',
-  },
-  hbmphy: {
-    desc: 'A 1,024-bit interface to one HBM3E stack, placed directly across from it on the interposer so the wires stay under ~2 mm.',
-    facts: [['Width', '1,024 data bits'], ['Rate', '9.6 Gb/s/pin = 1.23 TB/s'], ['Energy on die', '≈1.2 of 3.75 pJ/bit']],
-    why: 'Decode energy is mostly HBM traffic (D2). During decode these PHYs are the second-hottest blocks on the die, after the arrays.',
-  },
-  lpddrphy: {
-    desc: 'Eight x64 channels to the LPDDR5X packages on the substrate. This is the capacity tier: KV for agents that are waiting on a tool sits here.',
-    facts: [['Channels', '8 × x64 @ 8,533 MT/s'], ['Bandwidth', '546 GB/s peak'], ['Energy', '≈5 pJ/bit']],
-    why: 'For long, slow agent sessions, tiered KV serves 49 agents instead of 30 (8B) and keeps the chip saturated (D5).',
-  },
-  control: {
-    desc: 'Eight RISC-V application cores with vector extension. They run the batch scheduler, sampling, grammar and JSON-schema token masks, and tool I/O, so logits never leave the chip.',
-    facts: [['Cores', '8 × RV64 RVA23 + RVV (planned)'], ['Shared cache', '1 MB L2 (planned)'], ['Also runs', 'adaptive draft-length choice']],
-    why: 'The scheduler chooses the speculative draft length each step to minimise joules per accepted token (D6), which is worth 1.19× tok/J on the 70B agent.',
-  },
-  kv: {
-    desc: 'Paged KV cache in hardware: page tables, a prefix-hash CAM for shared system prompts, and park and restore of idle sessions to LPDDR.',
-    facts: [['Page size', '16 tokens (2.5 MB on 70B)'], ['Prefix CAM', '64k entries (planned)'], ['Shared prefix', 'stored once: 1.3 GB on 70B']],
-    why: 'Reusing KV across tool calls cuts energy per agent turn by 4.7 to 6.0× (D4), the biggest lever in the model.',
-  },
-  dma: {
-    desc: 'Descriptor-ring DMA engines for HBM to SRAM, HBM to LPDDR park and restore, and host transfers. They walk KV page tables directly.',
-    facts: [['Engines', '8'], ['Restore 70B session', '≈11 GB in ≈26 ms'], ['vs recompute', 'seconds of prefill']],
-    why: 'Restoring a 70k-token 70B session takes about 26 ms. Recomputing it takes about 9 s of prefill, so parking agents during tool calls costs almost nothing.',
-  },
-  system: {
-    desc: 'PLLs, per-domain voltage and frequency control with power gating, thermal sensors, telemetry, secure boot and debug.',
-    facts: [['Power domains', 'per tile + spine + PHYs (planned)'], ['Sensors', 'per tile thermal diode (planned)']],
-    why: 'Decode leaves the arrays about 70% idle. Lowering their voltage and frequency during decode is the next saving to model (phase 1b).',
-  },
-  pcie: {
-    desc: 'Host link. CXL memory semantics let cold agent sessions spill to host memory, below the LPDDR tier.',
-    facts: [['Link', 'PCIe 6.0 x16 · CXL 3.0'], ['Bandwidth', '128 GB/s per direction (raw)']],
-    why: 'Adds a third capacity tier for sessions that have been idle for minutes.',
-  },
-  c2c: {
-    desc: 'SerDes links for tensor-parallel scale-out when a model or batch needs more than one chip.',
-    facts: [['Links', '8 × 8 lanes × 112 Gb/s'], ['Aggregate', '≈896 GB/s per direction'], ['Energy', '≈5 pJ/bit']],
-    why: 'Sized for 405B-class models across 4 to 8 chips. Multi-chip is not modelled yet (phase 1b).',
-  },
-  die: {
-    desc: 'The compute die: 32 tiles, a control spine through the middle, HBM PHYs on the north and south edges, LPDDR on the west edge, and I/O on the east edge.',
-    facts: [['Size', '26 × 17 mm = 442 mm²'], ['Reticle use', '52% of 858 mm²'], ['Thickness', '0.72 mm (thinned)'], ['Core rail', '≈0.75 V · ≈260 A in decode']],
-    why: 'The die stays well under the reticle limit for yield. A 64-tile variant (open decision D3) would be about 675 mm².',
-  },
-  hbm: {
-    desc: 'A base logic die plus 12 DRAM dies stacked on through-silicon vias. It sits next to its PHY on the interposer.',
-    facts: [['Capacity', '12 × 24 Gb = 36 GB'], ['Bandwidth', '1.23 TB/s'], ['Footprint', '11 × 11 mm · 0.72 mm tall'], ['Access energy', '3.75 pJ/bit incl. PHY']],
-    why: 'Four stacks hold 70B weights in FP4 (37.5 GB) plus about 95 GB of active KV. DRAM stacks tolerate less heat than logic, so they limit sustained decode power.',
-  },
-  lpddr: {
-    desc: 'Capacity-tier memory on the organic substrate, with no interposer needed. Holds KV parked during tool calls.',
-    facts: [['Capacity', '32 GB each · 8 packages = 256 GB'], ['Bandwidth', '68 GB/s each'], ['Cost per GB', '≈¼ to ⅕ of HBM']],
-    why: 'An agent waiting 20 s on a tool needs its KV stored somewhere, not at 4.8 TB/s.',
-  },
-  interposer: {
-    desc: 'A silicon interposer that carries the 4,096 HBM data wires between the die and the stacks, with TSVs down to the substrate.',
-    facts: [['Size', '34 × 44 mm = 1,496 mm²'], ['vs reticle', '1.74× → stitched or bridges'], ['Thickness', '0.1 mm']],
-    why: 'HBM needs thousands of short wires, which only silicon routing provides. Its size and yield are a real cost item for four stacks.',
-  },
-  substrate: {
-    desc: 'Organic build-up substrate. It delivers power, fans signals out to the board, and carries the LPDDR packages and decoupling capacitors.',
-    facts: [['Size', '90 × 70 mm'], ['Thickness', '≈1.6 mm'], ['BGA', '≈5,800 balls at 1.0 mm pitch']],
-    why: 'Putting LPDDR on the substrate keeps the capacity tier close to the die without spending expensive interposer area.',
-  },
-  ring: {
-    desc: 'Metal stiffener around the substrate edge.',
-    facts: [['Height', '≈1.0 mm']],
-    why: 'A large lidless package warps during reflow. The ring keeps it flat so the BGA joints form reliably.',
-  },
-  decap: {
-    desc: 'Ceramic decoupling capacitors next to the interposer on the core power rail.',
-    facts: [['Rail', '≈0.75 V'], ['Load steps', 'prefill ↔ decode swings the array power by ~40 W']],
-    why: 'Mode switches change current in microseconds. Local capacitance stops the voltage from sagging and forcing lower clocks.',
-  },
-  c4: {
-    desc: 'Solder bumps that join the interposer to the substrate.',
-    facts: [['Pitch', '≈150 µm (drawn coarser)']],
-    why: 'They carry power and I/O down from the interposer.',
-  },
-  ubump: {
-    desc: 'Copper-pillar microbumps that join the die and the HBM stacks to the interposer.',
-    facts: [['Pitch', '≈40 µm (drawn coarser)'], ['Count', '~10⁵ in reality']],
-    why: 'The fine pitch is what makes 1,024-bit HBM interfaces possible.',
-  },
-  bga: {
-    desc: 'Solder balls that join the package to the board.',
-    facts: [['Pitch', '1.0 mm']],
-    why: 'About half of them are power and ground, to carry ~300 A.',
-  },
-  lid: {
-    desc: 'A heat spreader over the thermal interface material. Optional; the package view shows the lidless, direct-cooled option.',
-    facts: [['Material', 'Ni-plated Cu, 1.0 mm']],
-    why: 'Spreads the ~1.5 W/mm² array hot spots before the heat reaches the cold plate.',
-  },
-};
-
 /* ------------------------------------------------------------------ *
- * Power helpers                                                       *
+ * Power helpers (depend on the active config)                         *
  * ------------------------------------------------------------------ */
+let CFG = CONFIGS.v02;
+const tileStaticD = (mode) => CFG.power[mode].tileStatic / (CFG.tiles * CFG.tileArea);
+const dieFixedD = () => CFG.fixed.die / CFG.nonTileArea;
+const TILE_KINDS = new Set(['array', 'sram', 'vector', 'router']);
 function dynPower(kind, mode) {
-  const m = MODEL[mode];
+  const m = CFG.power[mode], n = CFG.tiles;
   switch (kind) {
-    case 'array':  return m.mac / 32;
-    case 'sram':   return m.sram / 32;
-    case 'vector': return (m.attn + m.vector) / 32;
-    case 'router': return m.noc / 32;
+    case 'array':  return m.mac / n;
+    case 'sram':   return m.sram / n;
+    case 'vector': return (m.attn + m.vector) / n;
+    case 'router': return m.noc / n;
     case 'hbmphy': return m.hbm * PHY_SHARE / 4;
     default:       return 0;
   }
 }
-function blockPower(kind, area, mode) { return dynPower(kind, mode) + DIE_STATIC_D * area; }
-function stackPower(mode) { return MODEL[mode].hbm * (1 - PHY_SHARE) / 4 + STATIC.hbm / 4; }
-function lpddrPower() { return STATIC.lpddr / 8; }
+function blockPower(kind, area, mode) {
+  return dynPower(kind, mode) + (TILE_KINDS.has(kind) ? tileStaticD(mode) : dieFixedD()) * area;
+}
+const stackPower = (mode) => CFG.power[mode].hbm * (1 - PHY_SHARE) / 4 + CFG.fixed.hbm / 4;
+const lpddrPower = () => CFG.fixed.lpddr / 8;
+function totals(mode) {
+  const m = CFG.power[mode];
+  const tilesDyn = m.mac + m.attn + m.vector + m.sram + m.noc;
+  const die = tilesDyn + m.tileStatic + CFG.fixed.die + m.hbm * PHY_SHARE;
+  const hbm = m.hbm * (1 - PHY_SHARE) + CFG.fixed.hbm;
+  const lp = CFG.fixed.lpddr;
+  return { die, hbm, lp, total: die + hbm + lp, core: tilesDyn + m.tileStatic };
+}
+const arrayDensity = (mode) => { const a = CFG.tileSub[0]; return blockPower('array', a.w * a.h, mode) / (a.w * a.h); };
 
+/* ------------------------------------------------------------------ *
+ * Per-kind description, facts and design rationale (config-aware)     *
+ * ------------------------------------------------------------------ */
+const INFO = {
+  array: (c) => ({
+    desc: 'Weight-stationary array of 16,384 processing elements. Weight blocks are double-buffered, so the next 128 × 128 block loads while activations stream through the current one.',
+    facts: [['Formats', 'FP4×FP8, FP8, BF16 · FP32 accumulate'], ['Peak per tile', '39.3 TFLOPS FP8 at 1.2 GHz'], ['Weight port', '256 B/cycle = 307 GB/s'], ['Area / PE', `≈${c.peUm2.toFixed(0)} µm²`]],
+    why: c.key === 'v02'
+      ? '3nm logic is 1.6× denser, so the array shrinks from 2.89 to 1.81 mm². That area pays for 16 more tiles in the same die size, which is where the +27% throughput comes from.'
+      : 'Prefill and agent turns are compute-bound (D3). The 256 B/cycle weight port keeps decode limited by HBM rather than by weight feed.',
+  }),
+  sram: (c) => ({
+    desc: 'Software-managed scratchpad with no cache tags. Holds weight blocks in flight, and during prefill it holds one layer of K/V so flash-style attention reads HBM only once.',
+    facts: [['Organisation', '16 banks × 256 KB'], ['Bandwidth', '≈1.2 TB/s per tile (planned)'], ['Share of tile', `${(100 * 1.75 / c.tileArea).toFixed(0)}%`], ['Access energy', c.key === 'v02' ? '0.68 pJ/byte' : '0.8 pJ/byte']],
+    why: c.key === 'v02'
+      ? 'SRAM bitcells did not shrink from 5nm to 3nm (0.021 µm² in both), so SRAM grew from 24% to 32% of each tile. This is why 3nm gives 1.5× the tiles, not 1.6×.'
+      : 'Each HBM byte costs 30 pJ and each SRAM byte 0.8 pJ. Reusing data on-chip is what makes prefill 65% MAC energy and only 1% HBM energy.',
+  }),
+  vector: () => ({
+    desc: 'Narrow dot-product engine for decode attention, plus FP32 elementwise work: softmax exponentials, norms, RoPE, and MX dequantisation.',
+    facts: [['Dot product', '1,024 FP8 MAC/cycle = 2.5 TFLOPS'], ['Elementwise', '512 FP32 op/cycle']],
+    why: 'Decode attention is matrix-vector. On a 128 × 128 array it would use 4 of 128 rows, so a separate engine runs it at full utilisation.',
+  }),
+  router: (c) => ({
+    desc: 'Node in the 2D mesh network. Multicast broadcasts weights; in-network reduction handles all-reduce. The sequencer runs per-layer micro-programs and clock-gates idle units.',
+    facts: [['Topology', `${c.mesh} 2D mesh`], ['Mean hops', `≈${c.hops}`], ['Energy', c.key === 'v02' ? '0.26 pJ/byte/hop' : '0.3 pJ/byte/hop']],
+    why: 'Sequencing layers in hardware keeps the per-layer barrier near 0.5 µs, which is 40 µs per decode step on an 80-layer model.',
+  }),
+  hbmphy: () => ({
+    desc: 'A 1,024-bit interface to one HBM3E stack, placed directly across from it on the interposer so the wires stay under ~2 mm.',
+    facts: [['Width', '1,024 data bits'], ['Rate', '9.6 Gb/s/pin = 1.23 TB/s'], ['Energy on die', '≈1.2 of 3.75 pJ/bit']],
+    why: 'Analog PHYs do not shrink with the node, so they cost the same 75 mm² in both versions. HBM4 (variant F) is the lever that cuts their energy.',
+  }),
+  lpddrphy: () => ({
+    desc: 'Eight x64 channels to the LPDDR5X packages on the substrate. This is the capacity tier: KV for agents that are waiting on a tool sits here.',
+    facts: [['Channels', '8 × x64 @ 8,533 MT/s'], ['Bandwidth', '546 GB/s peak'], ['Energy', '≈5 pJ/bit']],
+    why: 'For long, slow agent sessions, tiered KV serves 58 agents instead of 30 on 8B (D5).',
+  }),
+  control: () => ({
+    desc: 'Eight RISC-V application cores with vector extension. They run the batch scheduler, sampling, grammar and JSON-schema token masks, and tool I/O, so logits never leave the chip.',
+    facts: [['Cores', '8 × RV64 RVA23 + RVV (planned)'], ['Shared cache', '1 MB L2 (planned)'], ['Also runs', 'joint draft-length + DVFS choice']],
+    why: 'The scheduler picks the speculative draft length and the operating point together: lowest energy per token within 2% of the fastest option (D6).',
+  }),
+  kv: () => ({
+    desc: 'Paged KV cache in hardware: page tables, a prefix-hash CAM for shared system prompts, and park and restore of idle sessions to LPDDR.',
+    facts: [['Page size', '16 tokens (2.5 MB on 70B)'], ['Prefix CAM', '64k entries (planned)'], ['Shared prefix', 'stored once: 1.3 GB on 70B']],
+    why: 'Reusing KV across tool calls cuts energy per agent turn by 4.6 to 6.1× (D4), the biggest lever in the model.',
+  }),
+  dma: () => ({
+    desc: 'Descriptor-ring DMA engines for HBM to SRAM, HBM to LPDDR park and restore, and host transfers. They walk KV page tables directly.',
+    facts: [['Engines', '8'], ['Restore 70B session', '≈11 GB in ≈26 ms']],
+    why: 'Restoring a 70k-token 70B session takes about 26 ms. Recomputing it takes about 9 s of prefill, so parking agents during tool calls costs almost nothing.',
+  }),
+  system: (c) => ({
+    desc: 'PLLs, per-domain voltage and frequency control with power gating, thermal sensors, telemetry, secure boot and debug.',
+    facts: [['Compute rail points', '0.60 / 0.675 / 0.75 / 0.85 V'], ['Decode point', c.power.decode.opp], ['Array gating', c.key === 'v02' ? 'on (80% of idle array static)' : 'off']],
+    why: c.key === 'v02'
+      ? 'Decode waits on HBM, so the manager drops the compute rail to 0.60 V / 0.8 GHz with no change in step time. Decode power falls from 256 to 209 W on this design.'
+      : 'v0.1 runs at a fixed 0.75 V. Adding DVFS and gating is worth +6% tok/J at identical speed (v0.2).',
+  }),
+  pcie: () => ({
+    desc: 'Host link. CXL memory semantics let cold agent sessions spill to host memory, below the LPDDR tier.',
+    facts: [['Link', 'PCIe 6.0 x16 · CXL 3.0'], ['Bandwidth', '128 GB/s per direction (raw)']],
+    why: 'Adds a third capacity tier for sessions that have been idle for minutes.',
+  }),
+  c2c: () => ({
+    desc: 'SerDes links for tensor-parallel scale-out when a model or batch needs more than one chip.',
+    facts: [['Links', '8 × 8 lanes × 112 Gb/s'], ['Aggregate', '≈896 GB/s per direction']],
+    why: 'Sized for 405B-class models across 4 to 8 chips. Multi-chip is not modelled yet (phase 1c).',
+  }),
+  die: (c) => {
+    const d = totals('decode'), p = totals('prefill');
+    return {
+      desc: `The compute die: ${c.tiles} tiles in a ${c.mesh} grid, a control spine through the middle, HBM PHYs on the north and south edges, LPDDR on the west edge, and I/O on the east edge.`,
+      facts: [['Size', `${c.die.w} × ${c.die.h} mm = ${c.dieArea.toFixed(0)} mm²`], ['Reticle use', `${(100 * c.dieArea / RETICLE).toFixed(0)}% of 858 mm²`], ['Node', c.node],
+        ['Core rail current', `≈${(d.core / c.power.decode.v).toFixed(0)} A decode · ≈${(p.core / c.power.prefill.v).toFixed(0)} A prefill`]],
+      why: c.key === 'v02'
+        ? `The area model predicts ${c.areaModel} mm². Packing 48 tiles around fixed-size PHYs costs about 3% more (${c.dieArea.toFixed(0)} mm²), mostly in the control spine.`
+        : 'The die stays well under the reticle limit for yield. v0.2 keeps roughly this size and fits 48 tiles by moving to 3nm.',
+    };
+  },
+  hbm: () => ({
+    desc: 'A base logic die plus 12 DRAM dies stacked on through-silicon vias. It sits next to its PHY on the interposer.',
+    facts: [['Capacity', '12 × 24 Gb = 36 GB'], ['Bandwidth', '1.23 TB/s'], ['Footprint', '11 × 11 mm · 0.72 mm tall'], ['Access energy', '3.75 pJ/bit incl. PHY']],
+    why: 'Four stacks hold 70B weights in FP4 (37.5 GB) plus about 95 GB of active KV. HBM energy does not improve with the logic node, so it dominates decode in both versions.',
+  }),
+  lpddr: () => ({
+    desc: 'Capacity-tier memory on the organic substrate, with no interposer needed. Holds KV parked during tool calls.',
+    facts: [['Capacity', '32 GB each · 8 packages = 256 GB'], ['Bandwidth', '68 GB/s each'], ['Cost per GB', '≈¼ to ⅕ of HBM']],
+    why: 'An agent waiting 20 s on a tool needs its KV stored somewhere, not at 4.8 TB/s.',
+  }),
+  interposer: (c) => ({
+    desc: 'A silicon interposer that carries the 4,096 HBM data wires between the die and the stacks, with TSVs down to the substrate.',
+    facts: [['Size', `${c.interposer.w} × ${c.interposer.d} mm = ${(c.interposer.w * c.interposer.d).toLocaleString()} mm²`], ['vs reticle', `${(c.interposer.w * c.interposer.d / RETICLE).toFixed(2)}× → stitched or bridges`], ['Thickness', '0.1 mm']],
+    why: 'HBM needs thousands of short wires, which only silicon routing provides. Its size and yield are a real cost item for four stacks in both versions.',
+  }),
+  substrate: () => ({
+    desc: 'Organic build-up substrate. It delivers power, fans signals out to the board, and carries the LPDDR packages and decoupling capacitors.',
+    facts: [['Size', '90 × 70 mm'], ['Thickness', '≈1.6 mm'], ['BGA', '≈5,800 balls at 1.0 mm pitch']],
+    why: 'Putting LPDDR on the substrate keeps the capacity tier close to the die without spending expensive interposer area.',
+  }),
+  ring: () => ({ desc: 'Metal stiffener around the substrate edge.', facts: [['Height', '≈1.0 mm']], why: 'A large lidless package warps during reflow. The ring keeps it flat so the BGA joints form reliably.' }),
+  decap: (c) => ({
+    desc: 'Ceramic decoupling capacitors next to the interposer on the core power rail.',
+    facts: [['Rail', `${c.power.decode.v.toFixed(2)}–${c.power.prefill.v.toFixed(2)} V`], ['Load step', `decode ↔ prefill ≈${Math.abs(totals('prefill').core - totals('decode').core).toFixed(0)} W on the core rail`]],
+    why: 'Mode switches change current in microseconds. With DVFS the voltage also moves, so local capacitance matters more in v0.2.',
+  }),
+  c4: () => ({ desc: 'Solder bumps that join the interposer to the substrate.', facts: [['Pitch', '≈150 µm (drawn coarser)']], why: 'They carry power and I/O down from the interposer.' }),
+  ubump: () => ({ desc: 'Copper-pillar microbumps that join the die and the HBM stacks to the interposer.', facts: [['Pitch', '≈40 µm (drawn coarser)'], ['Count', '~10⁵ in reality']], why: 'The fine pitch is what makes 1,024-bit HBM interfaces possible.' }),
+  bga: () => ({ desc: 'Solder balls that join the package to the board.', facts: [['Pitch', '1.0 mm']], why: 'About half of them are power and ground, to carry several hundred amps.' }),
+  lid: (c) => ({
+    desc: 'A heat spreader over the thermal interface material. Optional; the package view shows the lidless, direct-cooled option.',
+    facts: [['Material', 'Ni-plated Cu, 1.0 mm']],
+    why: `Spreads the ≈${arrayDensity('prefill').toFixed(2)} W/mm² array hot spots during prefill.${c.key === 'v02' ? ' At 3nm the same work lands on less area, so hot spots are denser than in v0.1.' : ''}`,
+  }),
+};
+
+/* ------------------------------------------------------------------ *
+ * Heat ramp                                                           *
+ * ------------------------------------------------------------------ */
 const HEAT_STOPS = [[0, '#1B1036'], [0.22, '#4F1C6E'], [0.45, '#A62F62'], [0.7, '#EE7432'], [1, '#FBE59A']];
 const heatCols = HEAT_STOPS.map(([t, c]) => [t, new THREE.Color(c)]);
 function heatColor(v) {
@@ -677,7 +717,7 @@ document.getElementById('legend-bar').style.background =
   'linear-gradient(90deg,' + HEAT_STOPS.map(([t, c]) => `${c} ${t * 100}%`).join(',') + ')';
 
 /* ------------------------------------------------------------------ *
- * Renderer, scene, camera                                             *
+ * Renderer, scene, camera, lights                                     *
  * ------------------------------------------------------------------ */
 const stage = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -685,7 +725,6 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 stage.prepend(renderer.domElement);
-
 const labelRenderer = new CSS2DRenderer();
 labelRenderer.domElement.className = 'labels';
 stage.appendChild(labelRenderer.domElement);
@@ -698,7 +737,6 @@ controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 8;
 controls.maxDistance = 320;
-
 scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4458, 1.9));
 const sun = new THREE.DirectionalLight(0xffffff, 2.4);
 sun.position.set(55, 120, 70);
@@ -728,10 +766,7 @@ function pattern(kind) {
     g.lineWidth = 1.5;
     for (let i = 0; i <= 16; i++) { const p = i * 16; line(p, 0, p, 256); line(0, p, 256, p); }
   } else if (kind === 'sram') {
-    for (let r = 0; r < 8; r++) for (let col = 0; col < 2; col++) {
-      rect(col * 128 + 8, r * 32 + 4, 112, 24, mid);
-      rect(col * 128 + 8, r * 32 + 26, 112, 2, dark);
-    }
+    for (let r = 0; r < 8; r++) for (let col = 0; col < 2; col++) { rect(col * 128 + 8, r * 32 + 4, 112, 24, mid); rect(col * 128 + 8, r * 32 + 26, 112, 2, dark); }
   } else if (kind === 'vector') {
     for (let i = 0; i < 8; i++) rect(i * 32 + 4, 20, 24, 216, i % 2 ? mid : 'rgba(0,0,0,0.22)');
   } else if (kind === 'router') {
@@ -745,9 +780,7 @@ function pattern(kind) {
   } else if (kind === 'control') {
     for (let r = 0; r < 2; r++) for (let col = 0; col < 4; col++) { rect(col * 64 + 6, r * 128 + 10, 52, 108, mid); rect(col * 64 + 6, r * 128 + 10, 52, 18, dark); }
   } else if (kind === 'kv') {
-    rect(8, 8, 150, 240, mid);
-    g.lineWidth = 2; for (let i = 0; i < 16; i++) line(8, 8 + i * 15, 158, 8 + i * 15);
-    rect(172, 8, 76, 240, 'rgba(0,0,0,0.22)');
+    rect(8, 8, 150, 240, mid); g.lineWidth = 2; for (let i = 0; i < 16; i++) line(8, 8 + i * 15, 158, 8 + i * 15); rect(172, 8, 76, 240, 'rgba(0,0,0,0.22)');
   } else if (kind === 'dma') {
     for (let i = 0; i < 8; i++) { rect(i * 32 + 4, 12, 24, 232, mid); rect(i * 32 + 4, 12, 24, 30, dark); }
   } else if (kind === 'system') {
@@ -756,7 +789,6 @@ function pattern(kind) {
     g.strokeStyle = 'rgba(0,0,0,0.10)'; g.lineWidth = 2;
     for (let i = 0; i < 30; i++) { const y = i * 9 + 3; line(0, y, 90 + (i * 37) % 120, y); line(90 + (i * 37) % 120, y, 256, y + 18); }
   } else if (kind === 'lpddr') {
-    g.fillStyle = 'rgba(255,255,255,1)'; g.fillRect(0, 0, 256, 256);
     g.fillStyle = 'rgba(0,0,0,0.12)'; g.font = '600 30px "IBM Plex Mono", monospace';
     g.fillText('LPDDR5X', 58, 120); g.fillText('32 GB', 84, 160);
     g.beginPath(); g.arc(28, 28, 10, 0, Math.PI * 2); g.fill();
@@ -770,230 +802,16 @@ const PATTERNS = {};
 const tex = (k) => (PATTERNS[k] ??= pattern(k));
 
 /* ------------------------------------------------------------------ *
- * Scene graph with explode offsets                                    *
+ * Scene build (rebuilt when the design version changes)               *
  * ------------------------------------------------------------------ */
-const groups = {};
 const EXPLODE = { bga: -9, sub: 0, c4: 7, int: 14, ub: 21, die: 30, hbm: 30, lid: 58 };
-for (const k of Object.keys(EXPLODE)) { groups[k] = new THREE.Group(); scene.add(groups[k]); }
+let root = null, groups = {}, pickables = [], heatables = [], entries = [], byId = new Map();
+let labels = [], hbmLayers = [], neutralMeshes = [], lid = null, lidMat = null;
 
-const pickables = [];          // meshes the raycaster can hit
-const heatables = [];          // { mesh, density(mode) }
-const entries = [];            // selectable things for the dropdown: { id, label, kind, meshes, info }
-const byId = new Map();
+const std = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.15, ...opts });
+function addEntry(e) { entries.push(e); byId.set(e.id, e); for (const m of e.meshes) m.userData.entry = e; return e; }
+const dieToWorld = (x, y, w, h) => ({ x: IX - CFG.die.w / 2 + x + w / 2, z: CFG.die.h / 2 - (y + h / 2) });
 
-function std(color, opts = {}) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.15, ...opts });
-}
-function addEntry(e) { entries.push(e); byId.set(e.id, e); for (const m of e.meshes) { m.userData.entry = e; } return e; }
-function dieToWorld(x, y, w, h) { return { x: IX - DIE.w / 2 + x + w / 2, z: DIE.h / 2 - (y + h / 2) }; }
-
-/* substrate + ring + decaps + LPDDR */
-{
-  const s = new THREE.Mesh(new THREE.BoxGeometry(SUBSTRATE.w, H.sub, SUBSTRATE.d), std(KIND.substrate.color, { map: tex('substrate'), roughness: 0.85 }));
-  s.position.y = H.sub / 2;
-  s.receiveShadow = true;
-  groups.sub.add(s);
-  pickables.push(s);
-  addEntry({ id: 'substrate', label: 'Organic substrate', kind: 'substrate', meshes: [s] });
-
-  const ringMat = std(KIND.ring.color, { metalness: 0.7, roughness: 0.35 });
-  const rw = 3, rh = H.ring;
-  const ringParts = [
-    [SUBSTRATE.w, rw, 0, -(SUBSTRATE.d / 2 - rw / 2)],
-    [SUBSTRATE.w, rw, 0, SUBSTRATE.d / 2 - rw / 2],
-    [rw, SUBSTRATE.d - 2 * rw, -(SUBSTRATE.w / 2 - rw / 2), 0],
-    [rw, SUBSTRATE.d - 2 * rw, SUBSTRATE.w / 2 - rw / 2, 0],
-  ].map(([w, d, x, z]) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, rh, d), ringMat);
-    m.position.set(x, H.sub + rh / 2, z);
-    m.castShadow = true;
-    groups.sub.add(m);
-    pickables.push(m);
-    return m;
-  });
-  addEntry({ id: 'ring', label: 'Stiffener ring', kind: 'ring', meshes: ringParts });
-
-  // decoupling caps: grid east of the interposer
-  const capGeo = new THREE.BoxGeometry(1.0, 0.5 * VZ, 0.5);
-  const capMat = std(KIND.decap.color, { roughness: 0.6 });
-  const caps = [];
-  for (let x = 28.5; x <= 41.5; x += 1.8) for (let z = -29; z <= 29; z += 1.6) caps.push([x, z]);
-  const capMesh = new THREE.InstancedMesh(capGeo, capMat, caps.length);
-  const mtx = new THREE.Matrix4();
-  caps.forEach(([x, z], i) => { mtx.makeTranslation(x, H.sub + 0.25 * VZ, z); capMesh.setMatrixAt(i, mtx); });
-  groups.sub.add(capMesh);
-  pickables.push(capMesh);
-  addEntry({ id: 'decap', label: 'Decoupling capacitors', kind: 'decap', meshes: [capMesh] });
-
-  // LPDDR5X packages, 2 columns × 4 rows on the west side
-  const lpGeo = new THREE.BoxGeometry(12.4, H.lp, 15);
-  const lpMeshes = [];
-  let n = 0;
-  for (const x of [-38.3, -24.7]) for (const z of [-24.75, -8.25, 8.25, 24.75]) {
-    const m = new THREE.Mesh(lpGeo, std(KIND.lpddr.color, { map: tex('lpddr'), roughness: 0.7 }));
-    m.position.set(x, H.sub + H.lp / 2, z);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    groups.sub.add(m);
-    pickables.push(m);
-    heatables.push({ mesh: m, density: () => lpddrPower() / (12.4 * 15) });
-    lpMeshes.push(m);
-    n++;
-  }
-  addEntry({ id: 'lpddr', label: 'LPDDR5X packages (×8)', kind: 'lpddr', meshes: lpMeshes });
-}
-
-/* instanced ball / bump grids */
-function ballGrid(group, { cx, cz, w, d, pitch, r, y, color, kind, id, label, sy = 1, skip }) {
-  const pts = [];
-  for (let x = cx - w / 2 + pitch / 2; x < cx + w / 2; x += pitch)
-    for (let z = cz - d / 2 + pitch / 2; z < cz + d / 2; z += pitch)
-      if (!skip || !skip(x, z)) pts.push([x, z]);
-  const geo = new THREE.SphereGeometry(r, 8, 6);
-  const mat = std(color, { metalness: 0.85, roughness: 0.3 });
-  const mesh = new THREE.InstancedMesh(geo, mat, pts.length);
-  const m = new THREE.Matrix4();
-  pts.forEach(([x, z], i) => { m.makeScale(1, sy, 1).setPosition(x, y, z); mesh.setMatrixAt(i, m); });
-  group.add(mesh);
-  pickables.push(mesh);
-  if (id) addEntry({ id, label, kind, meshes: [mesh] });
-  return mesh;
-}
-ballGrid(groups.bga, { cx: 0, cz: 0, w: SUBSTRATE.w - 4, d: SUBSTRATE.d - 4, pitch: 1.6, r: 0.36, y: -0.36, color: KIND.bga.color, kind: 'bga', id: 'bga', label: 'BGA solder balls' });
-ballGrid(groups.c4, { cx: IX, cz: 0, w: INTERPOSER.w, d: INTERPOSER.d, pitch: 1.1, r: 0.16, y: Y.subTop + H.c4 / 2, sy: H.c4 / 0.32, color: KIND.c4.color, kind: 'c4', id: 'c4', label: 'C4 bumps' });
-
-/* interposer */
-{
-  const m = new THREE.Mesh(new THREE.BoxGeometry(INTERPOSER.w, H.int, INTERPOSER.d), std(KIND.interposer.color, { metalness: 0.5, roughness: 0.35 }));
-  m.position.set(IX, Y.int0 + H.int / 2, 0);
-  m.receiveShadow = true;
-  m.castShadow = true;
-  groups.int.add(m);
-  pickables.push(m);
-  addEntry({ id: 'interposer', label: 'Silicon interposer', kind: 'interposer', meshes: [m] });
-}
-
-/* HBM stack positions: aligned with their PHYs */
-const HBM_POS = [
-  { x: IX - 6, z: -14.5, phy: 0 }, { x: IX + 6, z: -14.5, phy: 1 },
-  { x: IX - 6, z: 14.5, phy: 2 },  { x: IX + 6, z: 14.5, phy: 3 },
-];
-
-/* microbumps under die and stacks */
-{
-  const pts = [];
-  const add = (cx, cz, w, d) => { for (let x = cx - w / 2 + 0.35; x < cx + w / 2; x += 0.7) for (let z = cz - d / 2 + 0.35; z < cz + d / 2; z += 0.7) pts.push([x, z]); };
-  add(IX, 0, DIE.w, DIE.h);
-  for (const p of HBM_POS) add(p.x, p.z, 11, 11);
-  const geo = new THREE.CylinderGeometry(0.12, 0.12, H.ub, 6);
-  const mesh = new THREE.InstancedMesh(geo, std(KIND.ubump.color, { metalness: 0.9, roughness: 0.3 }), pts.length);
-  const m = new THREE.Matrix4();
-  pts.forEach(([x, z], i) => { m.makeTranslation(x, Y.intTop + H.ub / 2, z); mesh.setMatrixAt(i, m); });
-  groups.ub.add(mesh);
-  pickables.push(mesh);
-  addEntry({ id: 'ubump', label: 'Microbumps', kind: 'ubump', meshes: [mesh] });
-}
-
-/* compute die body */
-let dieBody;
-{
-  dieBody = new THREE.Mesh(new THREE.BoxGeometry(DIE.w, H.die, DIE.h), std(KIND.die.color, { metalness: 0.35, roughness: 0.3 }));
-  dieBody.position.set(IX, Y.die0 + H.die / 2, 0);
-  dieBody.castShadow = true;
-  dieBody.receiveShadow = true;
-  groups.die.add(dieBody);
-  pickables.push(dieBody);
-  addEntry({ id: 'die', label: 'Compute die', kind: 'die', meshes: [dieBody] });
-}
-
-/* die blocks */
-const blockGeoCache = new Map();
-function blockMesh(kind, x, y, w, h) {
-  const key = `${w}x${h}`;
-  if (!blockGeoCache.has(key)) blockGeoCache.set(key, new THREE.BoxGeometry(w, H.blk, h));
-  const mat = std(KIND[kind].color, { map: tex(kind), roughness: 0.5, metalness: 0.1 });
-  const mesh = new THREE.Mesh(blockGeoCache.get(key), mat);
-  const p = dieToWorld(x, y, w, h);
-  mesh.position.set(p.x, Y.dieTop + H.blk / 2, p.z);
-  mesh.receiveShadow = true;
-  const area = w * h;
-  mesh.userData.area = area;
-  mesh.userData.kind = kind;
-  heatables.push({ mesh, density: (mode) => blockPower(kind, area, mode) / area });
-  groups.die.add(mesh);
-  pickables.push(mesh);
-  return mesh;
-}
-const tilesByKind = { array: [], sram: [], vector: [], router: [] };
-let tileIdx = 0;
-for (let r = 0; r < 4; r++) for (let c = 0; c < 8; c++) {
-  const tx = TX0 + c * TILE, ty = ROWS[r];
-  const id = String(tileIdx).padStart(2, '0');
-  for (const s of TILE_SUB) {
-    const m = blockMesh(s.kind, tx + s.x, ty + s.y, s.w, s.h);
-    m.userData.tile = id;
-    tilesByKind[s.kind].push(m);
-    addEntry({ id: `${s.kind}-${id}`, label: `${KIND[s.kind].name} · T${id}`, kind: s.kind, tile: id, meshes: [m], area: s.w * s.h, count: 32, hidden: true });
-  }
-  tileIdx++;
-}
-const phyMeshes = [];
-for (const b of DIE_BLOCKS) {
-  const m = blockMesh(b.kind, b.x, b.y, b.w, b.h);
-  const suffix = b.kind === 'hbmphy' ? ` ${b.idx}` : '';
-  const e = addEntry({ id: b.kind + suffix.trim(), label: KIND[b.kind].name + suffix, kind: b.kind, meshes: [m], area: b.w * b.h, count: b.kind === 'hbmphy' ? 4 : 1 });
-  if (b.kind === 'hbmphy') phyMeshes.push(m);
-}
-// whitespace heat on the die body
-const blockArea = entries.filter(e => e.area).reduce((s, e) => s + e.area, 0);
-const whitespace = DIE_AREA - blockArea;
-heatables.push({ mesh: dieBody, density: () => DIE_STATIC_D });
-
-/* HBM stacks: base die, 12 DRAM layers, top mold */
-const hbmLayers = [];
-HBM_POS.forEach((p, i) => {
-  const g = new THREE.Group();
-  const base = 0.3, layer = 0.1, cap = H.die - base - 12 * layer;
-  const meshes = [];
-  const mk = (h, y, color, opts) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(11, h * 0.96, 11), std(color, opts));
-    m.position.set(p.x, y + h / 2, p.z);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    g.add(m);
-    pickables.push(m);
-    meshes.push(m);
-    return m;
-  };
-  const baseM = mk(base, Y.die0, '#3B404B', { metalness: 0.4, roughness: 0.4 });
-  baseM.userData.layerIndex = 0;
-  for (let k = 0; k < 12; k++) {
-    const m = mk(layer, Y.die0 + base + k * layer, '#737B89', { metalness: 0.45, roughness: 0.35 });
-    m.userData.layerIndex = k + 1;
-  }
-  const capM = mk(cap, Y.die0 + base + 12 * layer, '#1F2228', { roughness: 0.75 });
-  capM.userData.layerIndex = 13;
-  for (const m of meshes) {
-    m.userData.baseY = m.position.y;
-    heatables.push({ mesh: m, density: (mode) => stackPower(mode) / 121 });
-    hbmLayers.push(m);
-  }
-  groups.hbm.add(g);
-  addEntry({ id: `hbm${i}`, label: `HBM3E stack ${i}`, kind: 'hbm', meshes, idx: i });
-});
-
-/* lid */
-const lidMat = std(KIND.lid.color, { metalness: 0.85, roughness: 0.28, transparent: true, opacity: 0.35, depthWrite: false });
-const lid = new THREE.Mesh(new THREE.BoxGeometry(INTERPOSER.w + 2, H.lid, INTERPOSER.d + 2), lidMat);
-lid.position.set(IX, Y.dieTop + 0.3 + H.lid / 2, 0);
-lid.visible = false;
-groups.lid.add(lid);
-addEntry({ id: 'lid', label: 'Lid (exploded view)', kind: 'lid', meshes: [lid] });
-
-/* ------------------------------------------------------------------ *
- * Labels                                                              *
- * ------------------------------------------------------------------ */
-const labels = [];
 function label(title, sub, parent, pos, views) {
   const div = document.createElement('div');
   div.className = 'lbl';
@@ -1008,32 +826,176 @@ function label(title, sub, parent, pos, views) {
   labels.push(o);
   return o;
 }
-const PK = ['package', 'exploded'];
-label('Compute die', '26 × 17 mm · 442 mm²', groups.die, [IX, Y.dieTop + 1.2, 0], PK);
-label('HBM3E ×4', '36 GB · 1.23 TB/s each', groups.hbm, [IX + 6, Y.dieTop + 1.2, -14.5], PK);
-label('LPDDR5X ×8', '32 GB each · KV parking', groups.sub, [-31.5, H.sub + H.lp + 1, -24.75], PK);
-label('Silicon interposer', '34 × 44 mm · 1.74× reticle', groups.int, [IX + 17, Y.intTop + 0.6, 20], PK);
-label('Organic substrate', '90 × 70 mm', groups.sub, [-40, H.sub + 0.5, 33], PK);
-label('Decoupling caps', 'core rail ≈0.75 V', groups.sub, [35, H.sub + 2, -30], PK);
-label('C4 bumps', null, groups.c4, [IX - 17, Y.subTop + 0.5, 22], ['exploded']);
-label('Microbumps', null, groups.ub, [IX - 13, Y.intTop + 0.4, 8], ['exploded']);
-label('BGA balls', null, groups.bga, [-44, -0.5, 34], ['exploded']);
-label('Lid', 'Ni-plated Cu', groups.lid, [IX + 18, Y.dieTop + H.lid + 0.6, 22], ['exploded']);
 
-const DV = ['die'];
-const dl = (t, s, x, y, w, h) => { const p = dieToWorld(x, y, w, h); return label(t, s, groups.die, [p.x, Y.dieTop + 0.3, p.z], DV); };
-dl('Tile T00', '128² array · 4 MB', TX0, ROWS[0], TILE, TILE);
-dl('Control ×8 RISC-V', null, 2.2, 7.4, 5.3, 2.2);
-dl('KV / prefix manager', null, 7.6, 7.4, 5.3, 2.2);
-dl('DMA ×8', null, 13.0, 7.4, 5.3, 2.2);
-dl('System', 'PLL · DVFS · telemetry', 18.4, 7.4, 5.3, 2.2);
-dl('HBM3E PHY 0', null, 1.5, 15.3, 11, 1.7);
-dl('HBM3E PHY 1', null, 13.5, 15.3, 11, 1.7);
-dl('HBM3E PHY 2', null, 1.5, 0, 11, 1.7);
-dl('HBM3E PHY 3', null, 13.5, 0, 11, 1.7);
-dl('LPDDR5X', '8 ch', 0.3, 5.0, 1.7, 3);
-dl('PCIe 6 / CXL', null, 24.0, 1.9, 1.7, 5.4);
-dl('Chip links', null, 24.0, 7.5, 1.7, 7.6);
+function ballGrid(group, { cx, cz, w, d, pitch, r, y, color, kind, id, lbl, sy = 1 }) {
+  const pts = [];
+  for (let x = cx - w / 2 + pitch / 2; x < cx + w / 2; x += pitch)
+    for (let z = cz - d / 2 + pitch / 2; z < cz + d / 2; z += pitch) pts.push([x, z]);
+  const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(r, 8, 6), std(color, { metalness: 0.85, roughness: 0.3 }), pts.length);
+  const m = new THREE.Matrix4();
+  pts.forEach(([x, z], i) => { m.makeScale(1, sy, 1).setPosition(x, y, z); mesh.setMatrixAt(i, m); });
+  group.add(mesh);
+  pickables.push(mesh);
+  addEntry({ id, label: lbl, kind, meshes: [mesh] });
+}
+
+function build(cfg) {
+  if (root) {
+    scene.remove(root);
+    root.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  }
+  CFG = cfg;
+  root = new THREE.Group();
+  scene.add(root);
+  groups = {}; pickables = []; heatables = []; entries = []; byId = new Map(); labels = []; hbmLayers = []; neutralMeshes = [];
+  for (const k of Object.keys(EXPLODE)) { groups[k] = new THREE.Group(); root.add(groups[k]); }
+  const IP = cfg.interposer;
+
+  // substrate, ring, decaps, LPDDR
+  const sub = new THREE.Mesh(new THREE.BoxGeometry(SUBSTRATE.w, H.sub, SUBSTRATE.d), std(KIND.substrate.color, { map: tex('substrate'), roughness: 0.85 }));
+  sub.position.y = H.sub / 2; sub.receiveShadow = true;
+  groups.sub.add(sub); pickables.push(sub);
+  addEntry({ id: 'substrate', label: 'Organic substrate', kind: 'substrate', meshes: [sub] });
+
+  const ringMat = std(KIND.ring.color, { metalness: 0.7, roughness: 0.35 });
+  const rw = 3;
+  const ring = [[SUBSTRATE.w, rw, 0, -(SUBSTRATE.d / 2 - rw / 2)], [SUBSTRATE.w, rw, 0, SUBSTRATE.d / 2 - rw / 2],
+                [rw, SUBSTRATE.d - 2 * rw, -(SUBSTRATE.w / 2 - rw / 2), 0], [rw, SUBSTRATE.d - 2 * rw, SUBSTRATE.w / 2 - rw / 2, 0]]
+    .map(([w, d, x, z]) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, H.ring, d), ringMat);
+      m.position.set(x, H.sub + H.ring / 2, z); m.castShadow = true;
+      groups.sub.add(m); pickables.push(m); return m;
+    });
+  addEntry({ id: 'ring', label: 'Stiffener ring', kind: 'ring', meshes: ring });
+
+  const caps = [];
+  for (let x = 28.5; x <= 41.5; x += 1.8) for (let z = -29; z <= 29; z += 1.6) caps.push([x, z]);
+  const capMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.0, 0.5 * VZ, 0.5), std(KIND.decap.color, { roughness: 0.6 }), caps.length);
+  const mtx = new THREE.Matrix4();
+  caps.forEach(([x, z], i) => { mtx.makeTranslation(x, H.sub + 0.25 * VZ, z); capMesh.setMatrixAt(i, mtx); });
+  groups.sub.add(capMesh); pickables.push(capMesh);
+  addEntry({ id: 'decap', label: 'Decoupling capacitors', kind: 'decap', meshes: [capMesh] });
+
+  const lpGeo = new THREE.BoxGeometry(12.4, H.lp, 15);
+  const lpMeshes = [];
+  for (const x of [-38.3, -24.7]) for (const z of [-24.75, -8.25, 8.25, 24.75]) {
+    const m = new THREE.Mesh(lpGeo, std(KIND.lpddr.color, { map: tex('lpddr'), roughness: 0.7 }));
+    m.position.set(x, H.sub + H.lp / 2, z); m.castShadow = true; m.receiveShadow = true;
+    groups.sub.add(m); pickables.push(m);
+    heatables.push({ mesh: m, density: () => lpddrPower() / (12.4 * 15) });
+    lpMeshes.push(m);
+  }
+  addEntry({ id: 'lpddr', label: 'LPDDR5X packages (×8)', kind: 'lpddr', meshes: lpMeshes });
+
+  ballGrid(groups.bga, { cx: 0, cz: 0, w: SUBSTRATE.w - 4, d: SUBSTRATE.d - 4, pitch: 1.6, r: 0.36, y: -0.36, color: KIND.bga.color, kind: 'bga', id: 'bga', lbl: 'BGA solder balls' });
+  ballGrid(groups.c4, { cx: IX, cz: 0, w: IP.w, d: IP.d, pitch: 1.1, r: 0.16, y: Y.subTop + H.c4 / 2, sy: H.c4 / 0.32, color: KIND.c4.color, kind: 'c4', id: 'c4', lbl: 'C4 bumps' });
+
+  const ip = new THREE.Mesh(new THREE.BoxGeometry(IP.w, H.int, IP.d), std(KIND.interposer.color, { metalness: 0.5, roughness: 0.35 }));
+  ip.position.set(IX, Y.int0 + H.int / 2, 0); ip.receiveShadow = true; ip.castShadow = true;
+  groups.int.add(ip); pickables.push(ip);
+  addEntry({ id: 'interposer', label: 'Silicon interposer', kind: 'interposer', meshes: [ip] });
+
+  const hbmPos = [{ x: IX - cfg.hbmX, z: -cfg.hbmZ }, { x: IX + cfg.hbmX, z: -cfg.hbmZ }, { x: IX - cfg.hbmX, z: cfg.hbmZ }, { x: IX + cfg.hbmX, z: cfg.hbmZ }];
+
+  // microbumps
+  {
+    const pts = [];
+    const add = (cx, cz, w, d) => { for (let x = cx - w / 2 + 0.35; x < cx + w / 2; x += 0.7) for (let z = cz - d / 2 + 0.35; z < cz + d / 2; z += 0.7) pts.push([x, z]); };
+    add(IX, 0, cfg.die.w, cfg.die.h);
+    for (const p of hbmPos) add(p.x, p.z, 11, 11);
+    const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.12, H.ub, 6), std(KIND.ubump.color, { metalness: 0.9, roughness: 0.3 }), pts.length);
+    const m = new THREE.Matrix4();
+    pts.forEach(([x, z], i) => { m.makeTranslation(x, Y.intTop + H.ub / 2, z); mesh.setMatrixAt(i, m); });
+    groups.ub.add(mesh); pickables.push(mesh);
+    addEntry({ id: 'ubump', label: 'Microbumps', kind: 'ubump', meshes: [mesh] });
+  }
+
+  // die body + blocks
+  const dieBody = new THREE.Mesh(new THREE.BoxGeometry(cfg.die.w, H.die, cfg.die.h), std(KIND.die.color, { metalness: 0.35, roughness: 0.3 }));
+  dieBody.position.set(IX, Y.die0 + H.die / 2, 0); dieBody.castShadow = true; dieBody.receiveShadow = true;
+  groups.die.add(dieBody); pickables.push(dieBody);
+  addEntry({ id: 'die', label: 'Compute die', kind: 'die', meshes: [dieBody] });
+  heatables.push({ mesh: dieBody, density: () => dieFixedD() });
+
+  const blockMesh = (kind, x, y, w, h) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, H.blk, h), std(KIND[kind].color, { map: tex(kind), roughness: 0.5, metalness: 0.1 }));
+    const p = dieToWorld(x, y, w, h);
+    mesh.position.set(p.x, Y.dieTop + H.blk / 2, p.z); mesh.receiveShadow = true;
+    const area = w * h;
+    heatables.push({ mesh, density: (mode) => blockPower(kind, area, mode) / area });
+    groups.die.add(mesh); pickables.push(mesh);
+    return mesh;
+  };
+  let t = 0;
+  for (const ty of cfg.rows) for (let c = 0; c < cfg.cols; c++) {
+    const tx = cfg.tx0 + c * cfg.tileW;
+    const id = String(t).padStart(2, '0');
+    for (const s of cfg.tileSub) {
+      const m = blockMesh(s.kind, tx + s.x, ty + s.y, s.w, s.h);
+      addEntry({ id: `${s.kind}-${id}`, label: `${KIND[s.kind].name} · T${id}`, kind: s.kind, tile: id, meshes: [m], area: s.w * s.h, count: cfg.tiles, hidden: true });
+    }
+    t++;
+  }
+  for (const b of cfg.blocks) {
+    const m = blockMesh(b.kind, b.x, b.y, b.w, b.h);
+    const suffix = b.kind === 'hbmphy' ? ` ${b.idx}` : '';
+    addEntry({ id: b.kind + suffix.trim(), label: KIND[b.kind].name + suffix, kind: b.kind, idx: b.idx, meshes: [m], area: b.w * b.h, count: b.kind === 'hbmphy' ? 4 : 1 });
+  }
+
+  // HBM stacks
+  hbmPos.forEach((p, i) => {
+    const g = new THREE.Group();
+    const base = 0.3, layer = 0.1, cap = H.die - base - 12 * layer;
+    const meshes = [];
+    const mk = (h, y, color, opts, li) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(11, h * 0.96, 11), std(color, opts));
+      m.position.set(p.x, y + h / 2, p.z); m.castShadow = true; m.receiveShadow = true;
+      m.userData.layerIndex = li; m.userData.baseY = m.position.y;
+      g.add(m); pickables.push(m); meshes.push(m);
+      heatables.push({ mesh: m, density: (mode) => stackPower(mode) / 121 });
+      hbmLayers.push(m);
+    };
+    mk(base, Y.die0, '#3B404B', { metalness: 0.4, roughness: 0.4 }, 0);
+    for (let k = 0; k < 12; k++) mk(layer, Y.die0 + base + k * layer, '#737B89', { metalness: 0.45, roughness: 0.35 }, k + 1);
+    mk(cap, Y.die0 + base + 12 * layer, '#1F2228', { roughness: 0.75 }, 13);
+    groups.hbm.add(g);
+    addEntry({ id: `hbm${i}`, label: `HBM3E stack ${i}`, kind: 'hbm', idx: i, meshes });
+  });
+
+  // lid
+  lidMat = std(KIND.lid.color, { metalness: 0.85, roughness: 0.28, transparent: true, opacity: 0.35, depthWrite: false });
+  lid = new THREE.Mesh(new THREE.BoxGeometry(IP.w + 2, H.lid, IP.d + 2), lidMat);
+  lid.position.set(IX, Y.dieTop + 0.3 + H.lid / 2, 0);
+  lid.visible = false;
+  groups.lid.add(lid);
+  addEntry({ id: 'lid', label: 'Lid (exploded view)', kind: 'lid', meshes: [lid] });
+
+  // colours
+  for (const h of heatables) h.mesh.userData.baseColor = h.mesh.material.color.clone();
+  for (const e of entries) if (['substrate', 'interposer', 'ring'].includes(e.kind)) for (const m of e.meshes) { m.userData.baseColor = m.material.color.clone(); neutralMeshes.push(m); }
+
+  // labels
+  const PK = ['package', 'exploded'];
+  label('Compute die', `${cfg.die.w} × ${cfg.die.h} mm · ${cfg.dieArea.toFixed(0)} mm² · ${cfg.tiles} tiles`, groups.die, [IX, Y.dieTop + 1.2, 0], PK);
+  label('HBM3E ×4', '36 GB · 1.23 TB/s each', groups.hbm, [IX + cfg.hbmX, Y.dieTop + 1.2, -cfg.hbmZ], PK);
+  label('LPDDR5X ×8', '32 GB each · KV parking', groups.sub, [-31.5, H.sub + H.lp + 1, -24.75], PK);
+  label('Silicon interposer', `${IP.w} × ${IP.d} mm · ${(IP.w * IP.d / RETICLE).toFixed(2)}× reticle`, groups.int, [IX + IP.w / 2, Y.intTop + 0.6, IP.d / 2 - 2], PK);
+  label('Organic substrate', '90 × 70 mm', groups.sub, [-40, H.sub + 0.5, 33], PK);
+  label('Decoupling caps', 'core rail', groups.sub, [35, H.sub + 2, -30], PK);
+  label('C4 bumps', null, groups.c4, [IX - IP.w / 2, Y.subTop + 0.5, 22], ['exploded']);
+  label('Microbumps', null, groups.ub, [IX - cfg.die.w / 2, Y.intTop + 0.4, 8], ['exploded']);
+  label('BGA balls', null, groups.bga, [-44, -0.5, 34], ['exploded']);
+  label('Lid', 'Ni-plated Cu', groups.lid, [IX + IP.w / 2 + 1, Y.dieTop + H.lid + 0.6, 22], ['exploded']);
+  const DV = ['die'];
+  const dl = (tt, s, x, y, w, h) => { const p = dieToWorld(x, y, w, h); label(tt, s, groups.die, [p.x, Y.dieTop + 0.3, p.z], DV); };
+  dl('Tile T00', `128² array · 4 MB · ${cfg.tileArea.toFixed(2)} mm²`, cfg.tx0, cfg.rows[0], cfg.tileW, cfg.tileH);
+  const nameOf = { control: 'Control ×8 RISC-V', kv: 'KV / prefix manager', dma: 'DMA ×8', system: 'System · DVFS', pcie: 'PCIe 6 / CXL', c2c: 'Chip links' };
+  for (const b of cfg.blocks) {
+    if (b.kind === 'hbmphy') dl(`HBM3E PHY ${b.idx}`, null, b.x, b.y, b.w, b.h);
+    else if (b.kind === 'lpddrphy') dl('LPDDR5X', '8 ch', b.x, b.y + 3, b.w, 3);
+    else dl(nameOf[b.kind], null, b.x, b.y, b.w, b.h);
+  }
+}
 
 /* ------------------------------------------------------------------ *
  * View state, explode, camera tweening                                *
@@ -1042,9 +1004,9 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
 const VIEWS = {
   package:  { pos: [58, 72, 92],  target: [2, 3, 0] },
   exploded: { pos: [96, 78, 124], target: [2, 20, 0] },
-  die:      { pos: [IX, Y.dieTop + 30, 15], target: [IX, Y.dieTop, 0.8] },
+  die:      { pos: [IX, Y.dieTop + 31, 15], target: [IX, Y.dieTop, 0.8] },
 };
-const state = { view: 'package', heat: 'off', explode: 0, labels: true, selected: null, hovered: null };
+const state = { design: 'v02', view: 'package', heat: 'off', explode: 0, labels: true, selected: null, hovered: null };
 let anim = null;
 
 function setExplode(t) {
@@ -1055,12 +1017,11 @@ function setExplode(t) {
   lidMat.opacity = 0.35 * t;
 }
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-function goTo(view, { keepCamera = false } = {}) {
+function goTo(view) {
   state.view = view;
   const v = VIEWS[view];
   const fromPos = camera.position.clone(), fromTgt = controls.target.clone();
-  const toPos = keepCamera ? fromPos : new THREE.Vector3(...v.pos);
-  const toTgt = keepCamera ? fromTgt : new THREE.Vector3(...v.target);
+  const toPos = new THREE.Vector3(...v.pos), toTgt = new THREE.Vector3(...v.target);
   const fromE = state.explode, toE = view === 'exploded' ? 1 : 0;
   const dur = reduceMotion ? 0 : 1100;
   const t0 = performance.now();
@@ -1075,37 +1036,25 @@ function goTo(view, { keepCamera = false } = {}) {
   updateLabels();
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
 }
-function updateLabels() {
-  for (const l of labels) l.visible = state.labels && l.userData.views.includes(state.view);
-}
+function updateLabels() { for (const l of labels) l.visible = state.labels && l.userData.views.includes(state.view); }
 
 /* ------------------------------------------------------------------ *
- * Colouring: physical, heat, selection                                *
+ * Colouring                                                           *
  * ------------------------------------------------------------------ */
-for (const h of heatables) h.mesh.userData.baseColor = h.mesh.material.color.clone();
-const neutralMeshes = [];
-for (const e of entries) if (['substrate', 'interposer', 'ring'].includes(e.kind)) for (const m of e.meshes) { m.userData.baseColor = m.material.color.clone(); neutralMeshes.push(m); }
-
 function applyColors() {
-  for (const h of heatables) {
-    const c = state.heat === 'off' ? h.mesh.userData.baseColor : heatColor(h.density(state.heat));
-    h.mesh.material.color.copy(c);
-  }
+  for (const h of heatables) h.mesh.material.color.copy(state.heat === 'off' ? h.mesh.userData.baseColor : heatColor(h.density(state.heat)));
   for (const m of neutralMeshes) {
     m.material.color.copy(m.userData.baseColor);
     if (state.heat !== 'off') m.material.color.multiplyScalar(0.45);
   }
-  const sel = state.selected, hov = state.hovered;
   for (const e of entries) {
-    const glow = e === sel ? 0.34 : e === hov ? 0.16 : 0;
-    for (const m of e.meshes) {
-      if (!m.material.emissive) continue;
-      m.material.emissive.setRGB(glow, glow * 0.82, glow * 0.6);
-    }
+    const glow = e === state.selected ? 0.34 : e === state.hovered ? 0.16 : 0;
+    for (const m of e.meshes) if (m.material.emissive) m.material.emissive.setRGB(glow, glow * 0.82, glow * 0.6);
   }
   document.getElementById('legend').hidden = state.heat === 'off';
   if (state.heat !== 'off') {
-    document.getElementById('legend-title').textContent = `Power density · ${MODEL[state.heat].label} (${MODEL[state.heat].note})`;
+    const p = CFG.power[state.heat];
+    document.getElementById('legend-title').textContent = `${CFG.short} ${p.label} · ${p.note}`;
   }
 }
 
@@ -1114,37 +1063,29 @@ function applyColors() {
  * ------------------------------------------------------------------ */
 const fmtW = (w) => (w >= 10 ? w.toFixed(0) : w >= 1 ? w.toFixed(1) : w.toFixed(2));
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
 function entryPower(e, mode) {
   if (e.area) return blockPower(e.kind, e.area, mode);
   if (e.kind === 'hbm') return stackPower(mode);
   if (e.kind === 'lpddr') return lpddrPower() * 8;
-  if (e.kind === 'die') return dieTotals(mode).die;
+  if (e.kind === 'die') return totals(mode).die;
   return null;
 }
 function entryArea(e) {
   if (e.area) return e.area;
   if (e.kind === 'hbm') return 121;
   if (e.kind === 'lpddr') return 12.4 * 15 * 8;
-  if (e.kind === 'die') return DIE_AREA;
+  if (e.kind === 'die') return CFG.dieArea;
   return null;
 }
-function dieTotals(mode) {
-  let die = DIE_STATIC_D * whitespace;
-  for (const e of entries) if (e.area) die += blockPower(e.kind, e.area, mode);
-  const hbm = 4 * stackPower(mode), lp = 8 * lpddrPower();
-  return { die, hbm, lp, total: die + hbm + lp };
-}
-
 function renderCard() {
   const card = document.getElementById('card');
   const e = state.selected;
   if (!e) {
-    const d = dieTotals('decode'), p = dieTotals('prefill');
+    const d = totals('decode'), p = totals('prefill');
     card.innerHTML = `
-      <p class="kicker">Overview</p>
+      <p class="kicker">Overview · ${esc(CFG.short)}</p>
       <h2>Where the watts go</h2>
-      <p class="desc">Decode is memory-bound, so power concentrates in the HBM stacks and their PHYs. Prefill is compute-bound, so it concentrates in the 32 arrays. Switch the heat map to compare the two.</p>
+      <p class="desc">Decode is memory-bound, so power concentrates in the HBM stacks and their PHYs. Prefill is compute-bound, so it concentrates in the ${CFG.tiles} arrays.${CFG.key === 'v02' ? ' In v0.2 the compute rail drops to 0.60 V during decode.' : ''}</p>
       <table class="pwr">
         <thead><tr><th>Watts</th><th>Decode</th><th>Prefill</th></tr></thead>
         <tbody>
@@ -1154,10 +1095,10 @@ function renderCard() {
           <tr><td><b>Package</b></td><td><b>${fmtW(d.total)}</b></td><td><b>${fmtW(p.total)}</b></td></tr>
         </tbody>
       </table>
-      <p class="why"><b>Reading the model</b>Decode: ${MODEL.decode.note}. Prefill: ${MODEL.prefill.note}. Both come from model/engine.py; static power (60 W) is spread by area.</p>`;
+      <p class="why"><b>Operating points</b>Decode: ${esc(CFG.power.decode.opp)}. Prefill: ${esc(CFG.power.prefill.opp)}. Power comes from model/engine.py, split across blocks by function and area.</p>`;
     return;
   }
-  const k = KIND[e.kind], info = INFO[e.kind];
+  const k = KIND[e.kind], info = INFO[e.kind](CFG);
   const area = entryArea(e);
   const facts = [...info.facts];
   if (area) facts.unshift(['Area', `${area.toFixed(2)} mm²${e.count > 1 ? ` each · ×${e.count}` : ''}`]);
@@ -1170,15 +1111,15 @@ function renderCard() {
         <tr><td>Prefill</td><td>${fmtW(pp)}</td><td>${(pp / area).toFixed(2)}</td></tr>
       </tbody>
     </table>`;
+  const suffix = (e.kind === 'hbmphy' || e.kind === 'hbm') ? ` ${e.idx}` : '';
   card.innerHTML = `
-    <p class="kicker"><span class="swatch" style="background:${k.color}"></span>${esc(k.group)}${e.tile ? ` · tile T${e.tile}` : ''}</p>
-    <h2>${esc(k.name)}${e.kind === 'hbmphy' || e.kind === 'hbm' ? ` ${e.idx ?? e.id.slice(-1)}` : ''}</h2>
+    <p class="kicker"><span class="swatch" style="background:${k.color}"></span>${esc(k.group)}${e.tile ? ` · tile T${e.tile}` : ''} · ${esc(CFG.short)}</p>
+    <h2>${esc(k.name)}${suffix}</h2>
     <p class="desc">${esc(info.desc)}</p>
     <dl class="facts">${facts.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>
     ${pwr}
     <p class="why"><b>Why it's here</b>${esc(info.why)}</p>`;
 }
-
 function select(e) {
   state.selected = e;
   document.getElementById('jump').value = e ? (e.hidden ? `${e.kind}-00` : e.id) : '';
@@ -1187,24 +1128,24 @@ function select(e) {
 }
 
 /* dropdown */
-{
-  const sel = document.getElementById('jump');
+const jump = document.getElementById('jump');
+function fillDropdown() {
   const opt = (v, t) => `<option value="${v}">${esc(t)}</option>`;
   const dieIds = ['array-00', 'sram-00', 'vector-00', 'router-00', 'control', 'kv', 'dma', 'system', 'hbmphy0', 'hbmphy1', 'hbmphy2', 'hbmphy3', 'lpddrphy', 'pcie', 'c2c'];
   const pkgIds = ['die', 'hbm0', 'hbm1', 'hbm2', 'hbm3', 'lpddr', 'interposer', 'substrate', 'decap', 'ring', 'lid'];
   const icIds = ['ubump', 'c4', 'bga'];
   const name = (id) => { const e = byId.get(id); return e.hidden ? KIND[e.kind].name + ' (tile)' : e.label; };
-  sel.innerHTML = opt('', 'Overview') +
+  jump.innerHTML = opt('', 'Overview') +
     `<optgroup label="Die blocks">${dieIds.map(i => opt(i, name(i))).join('')}</optgroup>` +
     `<optgroup label="Package">${pkgIds.map(i => opt(i, name(i))).join('')}</optgroup>` +
     `<optgroup label="Interconnect">${icIds.map(i => opt(i, name(i))).join('')}</optgroup>`;
-  sel.addEventListener('change', () => {
-    const e = byId.get(sel.value) || null;
-    if (e && (e.area || e.kind === 'die') && state.view !== 'die') goTo('die');
-    if (e && ['lid', 'c4', 'ubump', 'bga'].includes(e.kind) && state.view !== 'exploded') goTo('exploded');
-    select(e);
-  });
 }
+jump.addEventListener('change', () => {
+  const e = byId.get(jump.value) || null;
+  if (e && (e.area || e.kind === 'die') && state.view !== 'die') goTo('die');
+  if (e && ['lid', 'c4', 'ubump', 'bga'].includes(e.kind) && state.view !== 'exploded') goTo('exploded');
+  select(e);
+});
 
 /* ------------------------------------------------------------------ *
  * Picking                                                             *
@@ -1215,8 +1156,7 @@ function hit(ev) {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hits = ray.intersectObjects(pickables.filter(m => m.visible), false);
-  for (const h of hits) if (h.object.userData.entry) return h.object.userData.entry;
+  for (const h of ray.intersectObjects(pickables.filter(m => m.visible), false)) if (h.object.userData.entry) return h.object.userData.entry;
   return null;
 }
 let down = null;
@@ -1236,18 +1176,78 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
   requestAnimationFrame(() => {
     hoverQueued = false;
     const e = hit(lastMove);
-    if (e !== state.hovered) {
-      state.hovered = e;
-      renderer.domElement.style.cursor = e ? 'pointer' : '';
-      applyColors();
-    }
+    if (e !== state.hovered) { state.hovered = e; renderer.domElement.style.cursor = e ? 'pointer' : ''; applyColors(); }
   });
 });
 renderer.domElement.addEventListener('pointerleave', () => { if (state.hovered) { state.hovered = null; applyColors(); } });
 
 /* ------------------------------------------------------------------ *
+ * Page text that depends on the design                                *
+ * ------------------------------------------------------------------ */
+function renderPageText() {
+  const c = CFG, d = totals('decode'), p = totals('prefill');
+  document.getElementById('eyebrow').textContent = c.eyebrow;
+  document.getElementById('specs').innerHTML = [
+    ['Die', `${c.die.w} × ${c.die.h} mm · ${c.dieArea.toFixed(0)} mm²`],
+    ['Node · tiles', `${c.node.replace(' (N3E)', '')} · ${c.tiles}`],
+    ['Peak', `${c.peak.fp8.toLocaleString()} TFLOPS FP8`],
+    ['HBM3E', '4 × 36 GB · 4.8 TB/s'],
+    ['LPDDR5X', '8 × 32 GB · 0.5 TB/s'],
+    ['Interposer', `${c.interposer.w} × ${c.interposer.d} mm`],
+    ['Power, 70B', `${d.total.toFixed(0)} W decode · ${p.total.toFixed(0)} W prefill`],
+  ].map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('');
+  document.getElementById('budget-note').textContent =
+    `${c.short}: block areas are estimates for a ${c.node} node${c.key === 'v02' ? ` (area model ${c.areaModel} mm², packed floorplan ${c.dieArea.toFixed(0)} mm²)` : ''}. Power comes from the analytical model: 70B decode at batch 64 draws ${d.total.toFixed(0)} W for the package (${c.power.decode.opp}), and a 4k-token prefill draws ${p.total.toFixed(0)} W.`;
+  document.getElementById('stack-interposer').textContent =
+    `${c.interposer.w} × ${c.interposer.d} mm is ${(c.interposer.w * c.interposer.d / RETICLE).toFixed(2)}× the 858 mm² reticle, so it needs stitching or bridges (CoWoS-L class).`;
+  renderBudget();
+}
+function renderBudget() {
+  const c = CFG, rows = [];
+  const subs = c.tileSub.map(s => ({ kind: s.kind, area: s.w * s.h }));
+  const subArea = subs.reduce((s, t) => s + t.area, 0);
+  const tileP = (mode) => subs.reduce((s, t) => s + blockPower(t.kind, t.area, mode), 0) + tileStaticD(mode) * (c.tileArea - subArea);
+  rows.push({ name: 'Compute tiles', color: KIND.array.color, count: c.tiles, each: c.tileArea, d: c.tiles * tileP('decode'), p: c.tiles * tileP('prefill') });
+  for (const t of subs) rows.push({ sub: true, name: KIND[t.kind].name, count: c.tiles, each: t.area, d: c.tiles * blockPower(t.kind, t.area, 'decode'), p: c.tiles * blockPower(t.kind, t.area, 'prefill') });
+  for (const [kind, count] of [['hbmphy', 4], ['lpddrphy', 1], ['control', 1], ['kv', 1], ['dma', 1], ['system', 1], ['pcie', 1], ['c2c', 1]]) {
+    const b = c.blocks.find(x => x.kind === kind), a = b.w * b.h;
+    rows.push({ name: KIND[kind].name, color: KIND[kind].color, count, each: a, d: count * blockPower(kind, a, 'decode'), p: count * blockPower(kind, a, 'prefill') });
+  }
+  const used = rows.filter(r => !r.sub).reduce((s, r) => s + r.count * r.each, 0);
+  const ws = c.dieArea - used;
+  rows.push({ name: 'Whitespace, seal ring, power grid', color: '#6B7384', count: 1, each: ws, d: dieFixedD() * ws, p: dieFixedD() * ws });
+  const top = rows.filter(r => !r.sub);
+  const totA = top.reduce((s, r) => s + r.count * r.each, 0);
+  const totD = top.reduce((s, r) => s + r.d, 0), totP = top.reduce((s, r) => s + r.p, 0);
+  const maxA = Math.max(...top.map(r => r.count * r.each));
+  document.getElementById('budget').innerHTML = `
+    <thead><tr><th>Block</th><th>Count</th><th>mm² each</th><th>mm² total</th><th>Share</th><th>Decode W</th><th>Prefill W</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const tot = r.count * r.each;
+      const nm = r.sub ? esc(r.name) : `<span class="name-cell"><span class="swatch" style="background:${r.color}"></span>${esc(r.name)}</span>`;
+      const bar = r.sub ? '' : `<span class="bar" style="width:${Math.max(2, 60 * tot / maxA)}px"></span>`;
+      return `<tr class="${r.sub ? 'sub' : ''}"><td>${nm}</td><td>${r.count}</td><td>${r.each.toFixed(2)}</td><td>${tot.toFixed(1)}</td><td>${(100 * tot / c.dieArea).toFixed(1)}%${bar}</td><td>${fmtW(r.d)}</td><td>${fmtW(r.p)}</td></tr>`;
+    }).join('')}</tbody>
+    <tfoot><tr><td>Compute die</td><td></td><td></td><td>${totA.toFixed(1)}</td><td>100%</td><td>${fmtW(totD)}</td><td>${fmtW(totP)}</td></tr></tfoot>`;
+}
+
+/* ------------------------------------------------------------------ *
  * Controls wiring                                                     *
  * ------------------------------------------------------------------ */
+function setDesign(key) {
+  state.design = key;
+  state.selected = null;
+  state.hovered = null;
+  build(CONFIGS[key]);
+  fillDropdown();
+  setExplode(state.explode);
+  updateLabels();
+  applyColors();
+  renderCard();
+  renderPageText();
+  document.querySelectorAll('[data-design]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.design === key)));
+}
+document.querySelectorAll('[data-design]').forEach(b => b.addEventListener('click', () => { if (b.dataset.design !== state.design) setDesign(b.dataset.design); }));
 document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => goTo(b.dataset.view)));
 document.querySelectorAll('[data-heat]').forEach(b => b.addEventListener('click', () => {
   state.heat = b.dataset.heat;
@@ -1256,43 +1256,6 @@ document.querySelectorAll('[data-heat]').forEach(b => b.addEventListener('click'
 }));
 document.getElementById('labels-on').addEventListener('change', (ev) => { state.labels = ev.target.checked; updateLabels(); });
 document.getElementById('reset').addEventListener('click', () => goTo(state.view));
-
-/* ------------------------------------------------------------------ *
- * Area budget table                                                   *
- * ------------------------------------------------------------------ */
-{
-  const rows = [];
-  const tileArea = TILE * TILE;
-  const tileSubs = TILE_SUB.map(s => ({ kind: s.kind, area: s.w * s.h }));
-  const tileD = (mode) => tileSubs.reduce((s, t) => s + blockPower(t.kind, t.area, mode), 0) + DIE_STATIC_D * (tileArea - tileSubs.reduce((s, t) => s + t.area, 0));
-  rows.push({ name: 'Compute tiles', color: KIND.array.color, count: 32, each: tileArea, d: 32 * tileD('decode'), p: 32 * tileD('prefill') });
-  for (const t of tileSubs) rows.push({ sub: true, name: KIND[t.kind].name, count: 32, each: t.area, d: 32 * blockPower(t.kind, t.area, 'decode'), p: 32 * blockPower(t.kind, t.area, 'prefill') });
-  const once = (kind, count) => {
-    const b = DIE_BLOCKS.find(x => x.kind === kind);
-    const a = b.w * b.h;
-    rows.push({ name: KIND[kind].name, color: KIND[kind].color, count, each: a, d: count * blockPower(kind, a, 'decode'), p: count * blockPower(kind, a, 'prefill') });
-  };
-  once('hbmphy', 4); once('lpddrphy', 1); once('control', 1); once('kv', 1); once('dma', 1); once('system', 1); once('pcie', 1); once('c2c', 1);
-  const tileWs = 32 * (tileArea - tileSubs.reduce((s, t) => s + t.area, 0));
-  const dieWs = DIE_AREA - rows.filter(r => !r.sub).reduce((s, r) => s + r.count * r.each, 0);
-  rows.push({ name: 'Whitespace, seal ring, power grid', color: '#6B7384', count: 1, each: dieWs, d: DIE_STATIC_D * dieWs, p: DIE_STATIC_D * dieWs });
-  const top = rows.filter(r => !r.sub);
-  const totA = top.reduce((s, r) => s + r.count * r.each, 0);
-  const totD = top.reduce((s, r) => s + r.d, 0), totP = top.reduce((s, r) => s + r.p, 0);
-  const maxA = Math.max(...top.map(r => r.count * r.each));
-  const html = `
-    <thead><tr><th>Block</th><th>Count</th><th>mm² each</th><th>mm² total</th><th>Share</th><th>Decode W</th><th>Prefill W</th></tr></thead>
-    <tbody>${rows.map(r => {
-      const tot = r.count * r.each;
-      const share = (100 * tot / DIE_AREA).toFixed(1) + '%';
-      const nm = r.sub ? esc(r.name) : `<span class="name-cell"><span class="swatch" style="background:${r.color}"></span>${esc(r.name)}</span>`;
-      const bar = r.sub ? '' : `<span class="bar" style="width:${Math.max(2, 60 * tot / maxA)}px"></span>`;
-      return `<tr class="${r.sub ? 'sub' : ''}"><td>${nm}</td><td>${r.count}</td><td>${r.each.toFixed(2)}</td><td>${tot.toFixed(1)}</td><td>${share}${bar}</td><td>${fmtW(r.d)}</td><td>${fmtW(r.p)}</td></tr>`;
-    }).join('')}</tbody>
-    <tfoot><tr><td>Compute die</td><td></td><td></td><td>${totA.toFixed(1)}</td><td>100%</td><td>${fmtW(totD)}</td><td>${fmtW(totP)}</td></tr></tfoot>`;
-  document.getElementById('budget').innerHTML = html;
-  void tileWs;
-}
 
 /* ------------------------------------------------------------------ *
  * Resize + loop                                                       *
@@ -1306,13 +1269,9 @@ function resize() {
 }
 new ResizeObserver(resize).observe(stage);
 resize();
-
 camera.position.set(...VIEWS.package.pos);
 controls.target.set(...VIEWS.package.target);
-setExplode(0);
-updateLabels();
-applyColors();
-renderCard();
+setDesign('v02');
 document.getElementById('loading').remove();
 
 function loop(now) {

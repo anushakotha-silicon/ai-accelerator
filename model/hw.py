@@ -33,6 +33,37 @@ class EnergyTable:
 
 
 @dataclass(frozen=True)
+class Node:
+    """Process-node scaling relative to the 5nm-class baseline.
+
+    Logic scales well from N5 to N3E; SRAM bitcells, wires and analog PHYs
+    barely scale (the N3E high-density bitcell is 0.021 um^2, same as N5).
+    That asymmetry decides which blocks get cheaper.
+    """
+    name: str
+    logic_energy: float      # dynamic energy per logic op at nominal V (N5 = 1)
+    sram_energy: float       # energy per SRAM byte
+    wire_energy: float       # energy per byte per NoC hop
+    logic_area: float        # area per logic function
+    sram_area: float         # area per SRAM bit
+    tile_static_w: float     # leakage + clock tree per tile at nominal V/f
+    fixed_static_w: float    # PHY idle, control cores, I/O: not on the compute DVFS rail
+
+
+N5 = Node("5nm-class", 1.0, 1.0, 1.0, 1.0, 1.0, 1.25, 20.0)
+# TSMC's public N3E-vs-N5 claim: ~32% lower power at iso-speed, ~1.6x logic density.
+N3 = Node("3nm-class (N3E)", 0.68, 0.85, 0.85, 0.625, 1.0, 1.0, 17.0)
+
+# Operating points for the compute rail (tiles + control spine): (volts, GHz).
+V_NOM, F_NOM = 0.75, 1.2
+OPPS = ((0.60, 0.80), (0.675, 1.00), (V_NOM, F_NOM), (0.85, 1.45))
+
+# Die-area model (mm^2 at N5, 32-tile floorplan in docs/package-3d.html).
+AREA = {"array": 2.89, "sram_per_mb": 1.75 / 4, "vector": 0.66, "router": 0.30, "tile_ws": 1.69,
+        "hbm_phy": 18.7, "lpddr_phy": 22.44, "io": 22.1, "spine": 46.64, "die_ws": 42.7}
+
+
+@dataclass(frozen=True)
 class Chip:
     name: str = "baseline"
     # --- compute tiles ---
@@ -52,9 +83,14 @@ class Chip:
     mem_eff: float = 0.85                 # achievable fraction of DRAM peak
     mm_eff: float = 0.85                  # achievable fraction of array peak
     layer_sync_us: float = 0.5            # per-layer barrier / sequencer cost
-    static_w: float = 60.0                # leakage + clocks + PHY idle + control cores
     tdp_w: float = 350.0
     energy: EnergyTable = field(default_factory=EnergyTable)
+    # --- process & power management ---
+    node: Node = N5
+    vdd: float = V_NOM                    # compute-rail voltage at the current operating point
+    dvfs: str = "off"                     # "off" | "efficiency" | "performance"
+    power_gating: bool = False            # gate idle arrays (keeps SRAM retention)
+    hbm_stacks: int = 4
 
     # derived ---------------------------------------------------------------
     @property
@@ -82,6 +118,42 @@ class Chip:
     @property
     def sram_mb(self) -> float:
         return self.tiles * self.sram_mb_per_tile
+
+    @property
+    def v_scale(self) -> float:
+        """Dynamic energy scales with V^2."""
+        return (self.vdd / V_NOM) ** 2
+
+    def tile_static_w_at(self, vdd: float, ghz: float) -> float:
+        # half leakage (~V^3 over this range), half clock tree (C V^2 f)
+        r = vdd / V_NOM
+        return self.tiles * self.node.tile_static_w * (0.5 * r ** 3 + 0.5 * r ** 2 * ghz / F_NOM)
+
+    @property
+    def static_w(self) -> float:
+        """Static power at nominal voltage and frequency."""
+        return self.node.fixed_static_w + self.tile_static_w_at(V_NOM, F_NOM)
+
+    @property
+    def idle_static_w(self) -> float:
+        """Power while the chip waits for work (e.g. every agent is in a tool call)."""
+        if self.dvfs == "off":
+            return self.static_w
+        v, f = OPPS[0]
+        tiles = self.tile_static_w_at(v, f)
+        if self.power_gating:
+            tiles *= 1 - 0.5 * 0.8        # arrays are half of tile static; gating removes 80%
+        return self.node.fixed_static_w + tiles
+
+    @property
+    def die_area_mm2(self) -> float:
+        n, a = self.node, AREA
+        tile = ((a["array"] + a["vector"] + a["router"]) * n.logic_area
+                + a["sram_per_mb"] * self.sram_mb_per_tile * n.sram_area
+                + a["tile_ws"] * (0.8 if n.logic_area < 1 else 1.0))
+        return (self.tiles * tile + a["hbm_phy"] * self.hbm_stacks
+                + (a["lpddr_phy"] if self.lpddr_gb > 0 else 0) + a["io"]
+                + a["spine"] * n.logic_area + a["die_ws"] * (0.8 if n.logic_area < 1 else 1.0))
 
     @property
     def noc_hops(self) -> float:

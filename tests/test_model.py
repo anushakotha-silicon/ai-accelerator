@@ -3,7 +3,7 @@ import unittest
 from dataclasses import replace
 
 from model.engine import best_decode_step, decode_step, prefill
-from model.hw import Chip, Serving
+from model.hw import N3, Chip, Serving
 from model.scenarios import POLICIES, run_agents, serve_chat
 from model.workloads import LLAMA_8B, LLAMA_70B, MIXTRAL_8X7B, AgentProfile, ChatProfile
 
@@ -79,6 +79,39 @@ class TestAgents(unittest.TestCase):
             r = run_agents(LLAMA_8B, CHIP, SRV, prof, p)
             self.assertLessEqual(r.turn_latency_s, prof.max_turn_latency_s)
             self.assertLessEqual(r.utilization, 1.0)
+
+
+class TestNodeAndPower(unittest.TestCase):
+    def test_area_calibration_and_n3_reinvestment(self):
+        self.assertAlmostEqual(Chip().die_area_mm2, 442.0, delta=0.5)
+        # 48 N3 tiles fit in the N5 32-tile die area (within 2%)
+        self.assertAlmostEqual(Chip(node=N3, tiles=48).die_area_mm2 / Chip().die_area_mm2, 1.0, delta=0.02)
+
+    def test_n3_port_is_perf_neutral_and_cheaper(self):
+        a = serve_chat(LLAMA_70B, Chip(), SRV, ChatProfile(), 64)
+        b = serve_chat(LLAMA_70B, Chip(node=N3), SRV, ChatProfile(), 64)
+        self.assertLessEqual(b.tpot_ms, 1.02 * a.tpot_ms)   # scheduler contract: within 2%
+        self.assertGreater(b.tokens_per_j, 1.15 * a.tokens_per_j)
+
+    def test_dvfs_lowers_voltage_in_memory_bound_decode_without_slowdown(self):
+        chip = Chip(node=N3, dvfs="efficiency")
+        c = decode_step(LLAMA_70B, chip, Serving(), 64, 1280)
+        nominal = decode_step(LLAMA_70B, Chip(node=N3), Serving(), 64, 1280)
+        self.assertLess(c.opp[0], 0.75)
+        self.assertLessEqual(c.time_s, 1.02 * nominal.time_s)
+        self.assertLess(c.total_j, nominal.total_j)
+
+    def test_joint_scheduler_never_trades_more_than_2pct_latency(self):
+        for chip in (Chip(), Chip(node=N3, dvfs="efficiency", power_gating=True)):
+            for b in (8, 128):
+                r = serve_chat(LLAMA_8B, chip, SRV, ChatProfile(), b)
+                fastest = min(serve_chat(LLAMA_8B, replace(chip, dvfs="off"), replace(SRV, spec_k=k), ChatProfile(), b).tpot_ms
+                              for k in range(SRV.spec_k + 1))
+                self.assertLessEqual(r.tpot_ms, 1.021 * fastest)
+
+    def test_performance_policy_respects_tdp(self):
+        chip = Chip(node=N3, tiles=64, dvfs="performance")
+        self.assertLessEqual(prefill(LLAMA_70B, chip, SRV, 4096).power_w, chip.tdp_w)
 
 
 if __name__ == "__main__":

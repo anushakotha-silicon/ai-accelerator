@@ -15,7 +15,7 @@ Execution model
 import math
 from dataclasses import dataclass, field, replace
 
-from .hw import DTYPE_BYTES, DTYPE_RATE, Chip, Serving
+from .hw import DTYPE_BYTES, DTYPE_RATE, F_NOM, OPPS, V_NOM, Chip, Serving
 from .workloads import Model
 
 
@@ -24,6 +24,7 @@ class Cost:
     time_s: float = 0.0
     energy: dict = field(default_factory=dict)   # joules per component
     bound: str = ""
+    opp: tuple = (V_NOM, F_NOM)                   # (volts, GHz) the step ran at
 
     @property
     def total_j(self) -> float:
@@ -34,13 +35,17 @@ class Cost:
         return self.total_j - self.energy.get("static", 0.0)
 
     def scaled(self, k: float) -> "Cost":
-        return Cost(self.time_s * k, {n: e * k for n, e in self.energy.items()}, self.bound)
+        return Cost(self.time_s * k, {n: e * k for n, e in self.energy.items()}, self.bound, self.opp)
 
     def __add__(self, other: "Cost") -> "Cost":
         e = dict(self.energy)
         for n, v in other.energy.items():
             e[n] = e.get(n, 0.0) + v
-        return Cost(self.time_s + other.time_s, e, self.bound or other.bound)
+        return Cost(self.time_s + other.time_s, e, self.bound or other.bound, self.opp)
+
+    @property
+    def power_w(self) -> float:
+        return self.total_j / self.time_s if self.time_s else 0.0
 
 
 def _matmul_time(chip: Chip, srv: Serving, weight_params: float, m_tokens: float) -> float:
@@ -54,22 +59,51 @@ def _matmul_time(chip: Chip, srv: Serving, weight_params: float, m_tokens: float
 
 
 def _energy(chip: Chip, srv: Serving, *, array_macs=0.0, vec_macs=0.0, vec_ops=0.0,
-            hbm_bytes=0.0, act_bytes=0.0, time_s=0.0) -> dict:
-    e = chip.energy
+            hbm_bytes=0.0, act_bytes=0.0, time_s=0.0, array_busy=1.0) -> dict:
+    e, n = chip.energy, chip.node
     pj = 1e-12
+    v2 = chip.v_scale
     # Every DRAM byte is written into and read out of scratchpad once; array
     # operands are re-read from scratchpad once per array_dim of reuse.
     sram_bytes = 2 * hbm_bytes + 3 * array_macs / chip.array_dim + vec_macs / 8
     noc_bytes = (hbm_bytes + act_bytes) * chip.noc_hops
+    tile_static = chip.tile_static_w_at(chip.vdd, chip.clock_ghz)
+    if chip.power_gating:
+        # arrays are half of tile static; gate 80% of it while they are idle
+        tile_static *= 1 - 0.5 * 0.8 * (1 - min(1.0, array_busy))
     return {
-        "mac": array_macs * e.mac[srv.compute_dtype] * pj,
-        "attn": vec_macs * e.vec_mac_pj * pj,
-        "vector": vec_ops * e.vec_op_pj * pj,
-        "sram": sram_bytes * e.sram_pj_per_byte * pj,
-        "noc": noc_bytes * e.noc_pj_per_byte_hop * pj,
+        "mac": array_macs * e.mac[srv.compute_dtype] * n.logic_energy * v2 * pj,
+        "attn": vec_macs * e.vec_mac_pj * n.logic_energy * v2 * pj,
+        "vector": vec_ops * e.vec_op_pj * n.logic_energy * v2 * pj,
+        "sram": sram_bytes * e.sram_pj_per_byte * n.sram_energy * v2 * pj,
+        "noc": noc_bytes * e.noc_pj_per_byte_hop * n.wire_energy * v2 * pj,
         "hbm": hbm_bytes * e.hbm_pj_per_byte * pj,
-        "static": chip.static_w * time_s,
+        "static": (n.fixed_static_w + tile_static) * time_s,
     }
+
+
+def _with_dvfs(chip: Chip, run) -> "Cost":
+    """Evaluate `run(chip)` at the operating point the power manager would pick.
+
+    efficiency:  lowest energy that is no more than 2% slower than nominal
+    performance: fastest point that fits under TDP
+    Both refuse points whose average power exceeds TDP (unless none fit).
+    """
+    if chip.dvfs == "off":
+        c = run(chip)
+        c.opp = (chip.vdd, chip.clock_ghz)
+        return c
+    costs = []
+    for v, f in OPPS:
+        c = run(replace(chip, vdd=v, clock_ghz=f))
+        c.opp = (v, f)
+        costs.append(c)
+    under = [c for c in costs if c.power_w <= chip.tdp_w] or [min(costs, key=lambda c: c.power_w)]
+    if chip.dvfs == "performance":
+        return min(under, key=lambda c: (round(c.time_s, 9), c.total_j))
+    nominal = next(c for c in costs if c.opp == (V_NOM, F_NOM))
+    ok = [c for c in under if c.time_s <= 1.02 * nominal.time_s] or under
+    return min(ok, key=lambda c: c.total_j)
 
 
 def _vector_ops_per_token(model: Model, ctx: float) -> float:
@@ -79,6 +113,10 @@ def _vector_ops_per_token(model: Model, ctx: float) -> float:
 
 
 def decode_step(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float) -> Cost:
+    return _with_dvfs(chip, lambda c: _decode_at(model, c, srv, batch, ctx))
+
+
+def _decode_at(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float) -> Cost:
     """One decode iteration for `batch` sequences at context length `ctx`.
 
     With speculative decoding each sequence verifies spec_k+1 positions per
@@ -112,32 +150,48 @@ def decode_step(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float) 
 
     act_bytes = model.layers * m * model.d_model * 4
     energy = _energy(chip, srv, array_macs=array_macs, vec_macs=vec_macs, vec_ops=vec_ops,
-                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t)
+                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
     return Cost(t, energy, bound)
 
 
 def best_decode_step(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float):
-    """Pick the draft length (0..srv.spec_k) with the lowest energy per accepted token.
+    """Jointly pick the draft length k (0..srv.spec_k) and, with DVFS, the operating point.
 
-    Speculation is nearly free when decode is memory-bound and wasteful once
-    the arrays saturate, so the on-chip scheduler adapts k to the live batch.
-    The objective is total joules (static power x time included), so latency
-    still counts, but rejected-draft MACs are no longer treated as free.
+    Rule: lowest energy per accepted token among options no more than 2% slower
+    per token than the fastest option at nominal voltage. Choosing k and V/f
+    separately lets each "free" saving compound into a large latency loss.
+    The performance policy instead takes the fastest option under TDP.
     """
-    best = None
+    opps = [(chip.vdd, chip.clock_ghz)] if chip.dvfs == "off" else list(OPPS)
+    cands = []
     for k in range(srv.spec_k + 1):
         s = replace(srv, spec_k=k)
-        c = decode_step(model, chip, s, batch, ctx)
-        score = c.total_j / s.tokens_per_step()
-        if best is None or score < best[0] - 1e-12:
-            best = (score, s, c)
-    return best[1], best[2]
+        tps = s.tokens_per_step()
+        for v, f in opps:
+            c = _decode_at(model, replace(chip, vdd=v, clock_ghz=f), s, batch, ctx)
+            c.opp = (v, f)
+            cands.append((c.time_s / tps, c.total_j / tps, s, c))
+    if chip.dvfs == "off":
+        pool = cands
+    else:
+        pool = [x for x in cands if x[3].power_w <= chip.tdp_w] or cands
+    if chip.dvfs == "performance":
+        best = min(pool, key=lambda x: (round(x[0], 12), x[1]))
+    else:
+        nominal = [x[0] for x in pool if x[3].opp == (V_NOM, F_NOM)] or [x[0] for x in pool]
+        ref = min(nominal)
+        best = min((x for x in pool if x[0] <= 1.02 * ref), key=lambda x: x[1])
+    return best[2], best[3]
 
 
 def prefill(model: Model, chip: Chip, srv: Serving, new_tokens: int, past_ctx: int = 0) -> Cost:
-    """Process `new_tokens` prompt tokens appended to `past_ctx` cached tokens."""
     if new_tokens <= 0:
         return Cost(0.0, {}, "none")
+    return _with_dvfs(chip, lambda c: _prefill_at(model, c, srv, new_tokens, past_ctx))
+
+
+def _prefill_at(model: Model, chip: Chip, srv: Serving, new_tokens: int, past_ctx: int) -> Cost:
+    """Process `new_tokens` prompt tokens appended to `past_ctx` cached tokens."""
     chunks = math.ceil(new_tokens / srv.prefill_chunk)
     chunk = new_tokens / chunks
     kvb = model.kv_bytes_per_token(DTYPE_BYTES[srv.kv_dtype])
@@ -168,7 +222,7 @@ def prefill(model: Model, chip: Chip, srv: Serving, new_tokens: int, past_ctx: i
 
     act_bytes = model.layers * new_tokens * model.d_model * 4
     energy = _energy(chip, srv, array_macs=array_macs + attn_macs, vec_ops=vec_ops,
-                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t)
+                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
     return Cost(t, energy, bound)
 
 

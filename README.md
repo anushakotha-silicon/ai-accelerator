@@ -11,15 +11,19 @@ performance and energy model that justifies every block before any RTL gets writ
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The chip: blocks, memory hierarchy, numerics, agentic features, design decisions D1–D8 |
 | [results/report.md](results/report.md) | Generated tables: chat, agentic, energy breakdown, ablations, design sweep |
+| [results/node_study.md](results/node_study.md) | 5nm vs 3nm variants, DVFS/power gating, levers, scored on a 7-workload suite |
+| [docs/package-3d.html](docs/package-3d.html) | Interactive 3D package and floorplan (open in a browser) |
 | `model/hw.py` | Chip config + energy table (every assumption lives here) |
 | `model/workloads.py` | Llama-3.1 8B/70B, Mixtral 8x7B, chat and agent profiles |
 | `model/engine.py` | Cost of one decode step / one prefill: time, bound, energy by component |
 | `model/scenarios.py` | Continuous-batching chat; agentic episodes under 3 KV policies |
+| `model/study.py` | Process-node and power-management study across the workload suite |
 
 Requires only Python 3.9+ with the standard library.
 
 ```bash
 python3 -m model.run                      # regenerate results/report.md
+python3 -m model.study                    # regenerate results/node_study.md
 python3 -m unittest discover tests        # sanity checks
 ```
 

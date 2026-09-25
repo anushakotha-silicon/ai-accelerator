@@ -83,7 +83,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
     e = chip.energy
 
     # ---- per-turn prefill (averaged over the episode) ----
-    pf_time = pf_dyn = xfer_lat = xfer_j = 0.0
+    pf_time = pf_j = xfer_lat = xfer_j = 0.0
     for i in range(prof.turns):
         ctx = prof.ctx_at_turn(i)
         new = prof.new_tokens_at_turn(i)
@@ -92,7 +92,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
         else:
             c = prefill(model, chip, srv, new, ctx - new)
         pf_time += c.time_s
-        pf_dyn += c.dynamic_j
+        pf_j += c.total_j
         if policy == "tiered-kv" and i > 0:
             restore = (ctx - new) * kvb                      # LPDDR -> HBM
             park = (prof.gen_tokens + prof.tool_output_tokens) * kvb  # HBM -> LPDDR (incremental)
@@ -100,7 +100,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
             moved = restore + park
             xfer_j += moved * (e.lpddr_pj_per_byte + e.hbm_pj_per_byte) * 1e-12
     n = prof.turns
-    pf_time, pf_dyn, xfer_lat, xfer_j = pf_time / n, pf_dyn / n, xfer_lat / n, xfer_j / n
+    pf_time, pf_j, xfer_lat, xfer_j = pf_time / n, pf_j / n, xfer_lat / n, xfer_j / n
 
     # average live session context and the context decode attends over
     ctx_session = sum(prof.ctx_at_turn(i) + prof.gen_tokens / 2 for i in range(n)) / n
@@ -108,6 +108,9 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
     shared_gb = prof.shared_prefix * kvb / 1e9
     free_hbm = chip.hbm_gb * 0.92 - weights_gb(model, srv) - shared_gb
     steps = math.ceil(prof.gen_tokens / srv.tokens_per_step())
+    if free_hbm <= per_agent_gb:
+        nan = float("nan")
+        return AgentResult(policy, 0.0, 0, 0.0, nan, nan, 0.0, nan, 0.0, "weights don't fit")
 
     # ---- choose the decode batch B ----
     # When the chip is saturated, each turn costs chip_time(B) seconds of chip,
@@ -164,8 +167,10 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
             turns_per_s = agents / cycle
             util = turns_per_s * chip_time
 
-    dyn_per_turn = pf_dyn + steps * step.dynamic_j / b + xfer_j
-    j_per_turn = dyn_per_turn + chip.static_w / turns_per_s
+    # busy energy (static included) + idle static while the chip waits on tools
+    busy_j = pf_j + steps * step.total_j / b + xfer_j
+    idle_s = max(0.0, 1.0 / turns_per_s - chip_time)
+    j_per_turn = busy_j + chip.idle_static_w * idle_s
     return AgentResult(
         policy=policy,
         concurrent_agents=agents,

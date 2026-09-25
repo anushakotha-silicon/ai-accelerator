@@ -1,4 +1,4 @@
-# Inference accelerator: architecture spec (v0.1)
+# Inference accelerator: architecture spec (v0.2)
 
 Status: **phase 1: architecture + analytical model.** Every number below comes from
 `python3 -m model.run` (full tables in [`results/report.md`](../results/report.md)),
@@ -181,61 +181,115 @@ them (section 9).
 | Achievable BW / array efficiency | 85% / 85% | |
 | Per-layer sync | 0.5 µs | hardware sequencer barrier |
 
-**Not modelled yet:** DVFS (decode leaves the arrays ~70% idle, so voltage and
-frequency could drop to cut power), NoC contention, multi-chip, thermal
-throttling, area/cost.
+**3nm scaling** (N3E-class, section 10): logic energy ×0.68 and logic area ×0.625
+(TSMC's public N3E-vs-N5 claims); SRAM energy ×0.85 and SRAM area ×1.0 (the N3E
+bitcell is the same 0.021 µm² as N5); wire energy ×0.85; PHYs don't shrink.
+
+**Power management** (section 10): compute-rail operating points 0.60 V/0.8 GHz,
+0.675/1.0, 0.75/1.2 (nominal), 0.85/1.45. Dynamic energy ∝ V²; tile static power is
+half leakage (∝ V³) and half clock tree (∝ V²f). Array power gating removes 80% of
+the array's static power while it is idle.
+
+**Not modelled yet:** NoC contention, multi-chip, thermal throttling, cost per die.
 
 ---
 
-## 9. What the model says (design decisions)
+## 9. What the model says (design decisions, N5 baseline)
 
-**D1: numerics are the biggest hardware lever.** BF16 everywhere is **0.28–0.57×**
-the baseline (and 70B no longer fits at batch 64). FP4 weights alone are worth
-1.15–1.18× tok/J over FP8 in chat decode. → *An MX FP4/FP8 datapath is mandatory.*
+**D1: numerics are the biggest hardware lever.** BF16 everywhere is **0.40–0.52×**
+the baseline, and 70B no longer fits. FP4 weights alone are worth 1.18–1.19× tok/J
+over FP8 in chat decode. → *An MX FP4/FP8 datapath is mandatory.*
 
 **D2: decode energy is HBM bytes.** In 8B decode at batch 1, HBM is 63% of
-energy and MACs are 1%. Chat 70B tok/J stays within 7.9–9.1 across a 2.5×
-bandwidth sweep (3.2 → 8.0 TB/s): bandwidth buys *latency* (18.6 → 6.9 ms/token),
+energy and MACs are 1%. Chat 70B tok/J stays within 7.1–9.2 across a 2.5×
+bandwidth sweep (3.2 → 8.0 TB/s): bandwidth buys *latency* (18.6 → 6.2 ms/token),
 not efficiency. → *Size HBM for the latency target, not for tok/J.*
 
 **D3: agentic throughput is compute-bound.** Coding agent 70B turns/s is
-0.70 → 1.40 → 2.79 for 16 → 32 → 64 tiles and flat across HBM bandwidth. Prefill
-MACs are 62% of agent-turn energy. → *An agentic chip wants roughly 2× the FLOP:byte
-ratio of a chat chip.* 64 tiles at 4.8 TB/s: agent tok/J 2.12 → 2.60 (1.23×),
-2× throughput, 322 W (at or over the 350 W TDP with faster HBM), about 2× array area.
-**Open decision:** 32 vs 48 vs 64 tiles, pending area/cost numbers from phase 3.
+0.85 → 1.54 → 2.79 for 16 → 32 → 64 tiles at 4.8 TB/s; bandwidth adds at most 19%
+at a fixed tile count. Prefill MACs are 62% of agent-turn energy. → *An agentic chip
+wants more FLOP per byte than a chat chip.* Resolved by the 3nm study (section 10): 48 tiles.
 
-**D4: KV reuse across tool calls is worth 4.7–6.0×** in J/turn (70B: 843 → 140 J).
+**D4: KV reuse across tool calls is worth 4.6–6.1×** in J/turn (70B: 843 → 138 J).
 Without it, work per episode grows with the square of the turn count. → *The KV
 manager is a first-class hardware block.*
 
 **D5: the LPDDR tier pays off only for long, slow sessions.** Research agent
-(140k-token context, 20 s tools): removing LPDDR costs 0.63× throughput on 8B.
-Tiered KV serves 49 vs 30 agents (8B) and 52 vs 25 (Mixtral) and reaches compute
-saturation; HBM-only doesn't. Coding agent (45k tokens, 3 s tools): no difference.
-512 GB adds nothing over 256 GB, because the chip is already compute-saturated.
-→ *256 GB is right-sized.*
+(140k-token context, 20 s tools): removing LPDDR costs 0.57× throughput on 8B, and
+tiered KV serves 58 vs 30 agents (8B) and 52 vs 25 (Mixtral). Coding agent (45k
+tokens, 3 s tools): no difference. 512 GB adds 1% over 256 GB. → *256 GB is right-sized.*
 
-**D6: speculation must be adaptive and energy-aware.** Fixed k=4 made 8B chat at
-batch 64 array-bound (4.5 ms/step), and a time-minimising scheduler wasted MACs
-on rejected drafts whenever HBM got faster. With an energy-minimising scheduler,
-speculation is worth 1.19× tok/J on the 70B coding agent and 1.16× on research
-throughput, and ~1.0× on large-batch chat, where the scheduler turns it off.
+**D6: speculation and DVFS must be chosen jointly.** Fixed k=4 made 8B chat at
+batch 64 array-bound. Choosing draft length and voltage separately let each "free"
+saving compound: on N3, 8B at batch 128 lost 35% latency to save 10% energy. The
+scheduler now picks (k, V, f) together: lowest energy per token within 2% of the
+fastest nominal option. Speculation is worth 1.19× tok/J on the 70B coding agent
+and 1.28× research-agent throughput.
 
-**D7: FP4 KV is the cheapest next win for agents** (+3–12%), if accuracy holds.
+**D7: FP4 KV is the cheapest next win** (+4–12% tok/J, up to +9% perf), if accuracy holds.
 
 **D8: latency vs energy is a runtime knob, not silicon.** At the same throughput
-(within 1%), the 70B coding agent can run at B=6 with 4.3 s turns and 140 J/turn,
-or B=15 with 9.8 s turns and 126 J/turn. The model reports the latency-first point.
+(within 1%), a smaller decode batch gives shorter agent turns and costs more
+J/turn. The model reports the latency-first point.
 
 ---
 
-## 10. Roadmap
+## 10. 3nm variant and power levers (v0.2)
+
+Full tables: [`results/node_study.md`](../results/node_study.md) (`python3 -m model.study`).
+Seven workloads: 8B chat at B=8 and B=128, 70B chat, Mixtral MoE, 32k-token
+long context on 70B, 70B coding agent, 8B research agent. "Caters to all
+workloads" means a high geometric-mean gain **and** no workload below 1.0×.
+
+| | Variant | Die mm² | tok/J gmean · worst | Perf gmean · worst | Peak avg W |
+|---|---|---|---|---|---|
+| A | N5, 32 tiles (v0.1) | 442 | 1.00 · 1.00 | 1.00 · 1.00 | 285 |
+| B | N3 port, 32 tiles | 359 | 1.23 · 1.18 | 1.00 · 1.00 | 233 |
+| C | B + DVFS + array gating | 359 | 1.30 · 1.20 | 1.00 · 1.00 | 216 |
+| **D** | **N3, 48 tiles + DVFS + gating** | **447** | **1.34 · 1.10** | **1.27 · 1.08** | **275** |
+| E | N3, 64 tiles + DVFS + gating | 535 | 1.38 · 1.13 | 1.44 · 1.13 | 279 |
+| F | D + HBM4 (8 TB/s, 20 pJ/B) | 447 | 1.52 · 1.26 | 1.47 · 1.16 | 269 |
+
+**What each lever buys:**
+1. **Node (A → B): +23% tok/J at identical speed.** Most of it is cheaper MACs and
+   lower leakage. HBM energy doesn't move, so decode-heavy work gains least (+18%).
+2. **DVFS + gating (B → C): +6% tok/J at identical speed.** Decode is memory-bound,
+   so the manager drops to 0.60 V / 0.8 GHz with no change in step time (measured on D,
+   70B B=64: 12.38 ms either way, 3.16 → 2.59 J, 256 → 209 W). Prefill stays at nominal. Idle power falls
+   from 49 W to 26 W, which matters because agents spend most of their time in tool calls.
+3. **Area reinvested in compute (C → D): +27% perf.** At N3, 48 tiles fit in 447 mm²,
+   the same die as v0.1. Prefill-bound work gains most: coding agent +50%, long
+   context +44%, and 70B chat at batch 64 +44%, because it sits at the memory/compute
+   crossover. Small-batch 8B chat, purely memory-bound, gains only 8%. Worst tok/J is the research agent
+   (1.10×): it's limited by LPDDR capacity, so the extra tiles idle and leak.
+4. **HBM4 (D → F): +13% tok/J, +16% perf.** The only lever that attacks the
+   30 pJ/byte cost that dominates decode. Assumed 20 pJ/B; unverified until vendors publish it.
+5. **Serving numerics on D:** FP4 KV +8% tok/J; FP4 activations +29% tok/J and
+   +29% perf. That's the largest single lever, but also the largest accuracy risk.
+
+**Rejected:** the "performance" DVFS policy (boost to 0.85 V / 1.45 GHz in prefill)
+gives +8% perf for −10% tok/J and 335 W peak. It stays available as a runtime mode,
+not the default. 64 tiles (E) beats D by +13% perf for +20% die area; that
+trade needs cost data.
+
+**v0.2 recommendation: variant D** (3nm-class, 48 tiles, 447 mm², DVFS + array
+gating, FP4 KV), with HBM4 (F) as the planned memory upgrade. Against v0.1 it gives
+1.34× tok/J and 1.27× throughput across the whole suite, with no workload slower
+or less efficient, inside the same die area and 350 W TDP.
+
+**Outside this suite:** vision and diffusion are dense matmul/conv work and should map
+onto the arrays. Recommendation models need a sparse embedding-gather engine (like
+TPU's SparseCore); nothing on this chip is designed for that yet.
+
+---
+
+## 11. Roadmap
 
 | Phase | Deliverable | Tools |
 |---|---|---|
 | 1 ✅ | This spec + analytical model | Python |
-| 1b | DVFS model, multi-chip (tensor-parallel 405B), resolve D3 | Python |
+| 1b ✅ | 3nm variant, DVFS + power gating, workload suite, resolve D3 (section 10) | Python |
+| 1c | Multi-chip (tensor-parallel 405B), cost per die, sparse-gather engine for recommendation models | Python |
 | 2 | RTL: 1 tile (systolic array + MX dequant + scratchpad + sequencer), testbench vs NumPy golden | SystemVerilog, Verilator, cocotb |
 | 3 | Synthesis area/power of the tile on an open PDK; recalibrate section 8 | Yosys, OpenROAD, SKY130/GF180 |
 | 4 | Multi-tile + NoC + RISC-V control core, run a real 1-layer transformer in simulation | Verilator, CVA6/Rocket |

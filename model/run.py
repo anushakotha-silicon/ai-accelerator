@@ -97,6 +97,8 @@ def ablation_table() -> str:
         cells = [f"{v:.2f} ({v / b:.2f}x)" for v, b in zip(vals, base)]
         if not c70.feasible:
             cells[1] = "doesn't fit"
+        if a70.limiter == "weights don't fit":
+            cells[2] = "doesn't fit"
         rows.append((name, *cells))
     return _t(rows, ["Variant", "Chat 8B B=64 tok/J", "Chat 70B B=64 tok/J",
                      "Coding agent 70B tok/J", "Research agent 8B turns/s"])
@@ -118,10 +120,7 @@ def sweep_table() -> str:
     rows = []
     for tiles in (16, 32, 64):
         for bw in (3.2, 4.8, 6.4, 8.0):
-            stacks = bw / 1.2
-            chip = replace(BASE_CHIP, tiles=tiles, hbm_tbps=bw,
-                           # static power scales with silicon + PHYs
-                           static_w=20 + 1.0 * tiles + 2.5 * stacks)
+            chip = replace(BASE_CHIP, tiles=tiles, hbm_tbps=bw)  # static scales with tile count
             c = serve_chat(LLAMA_70B, chip, BASE_SRV, CHAT, 64)
             a = run_agents(LLAMA_70B, chip, BASE_SRV, CODING, "tiered-kv")
             rows.append((tiles, f"{chip.peak_tflops('fp8'):.0f}", bw,

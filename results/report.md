@@ -23,22 +23,22 @@ Weights resident: 8B = 4.3 GB, 70B = 37.5 GB (MXFP4).
 | Model | Batch | TTFT ms | ms/token | tok/s/user | tok/s chip | tok/J | Avg W | draft k | Decode bound |
 |---|---|---|---|---|---|---|---|---|---|
 | Llama-3.1-8B | 1 | 15 | 0.67 | 1495 | 1,433 | 7.2 | 200 | 3 | memory |
-| Llama-3.1-8B | 8 | 15 | 0.79 | 1272 | 7,868 | 34.1 | 231 | 2 | memory |
-| Llama-3.1-8B | 32 | 15 | 1.22 | 817 | 14,919 | 60.0 | 249 | 1 | memory |
+| Llama-3.1-8B | 8 | 15 | 0.76 | 1308 | 8,046 | 33.2 | 242 | 3 | memory |
+| Llama-3.1-8B | 32 | 15 | 1.12 | 891 | 15,671 | 57.9 | 271 | 2 | memory |
 | Llama-3.1-8B | 64 | 15 | 1.71 | 584 | 18,015 | 69.0 | 261 | 1 | memory |
 | Llama-3.1-8B | 128 | 15 | 2.69 | 372 | 20,100 | 74.7 | 269 | 1 | memory |
-| Llama-3.1-8B | 256 | 15 | 6.26 | 160 | 18,810 | 77.0 | 244 | 0 | memory |
+| Llama-3.1-8B | 256 | 15 | 5.33 | 187 | 20,167 | 76.9 | 262 | 1 | array |
 | Llama-3.1-70B | 1 | 135 | 6.03 | 166 | 159 | 0.8 | 201 | 3 | memory |
-| Llama-3.1-70B | 8 | 135 | 6.45 | 155 | 934 | 4.0 | 234 | 2 | memory |
+| Llama-3.1-70B | 8 | 135 | 6.27 | 159 | 955 | 3.9 | 246 | 3 | memory |
 | Llama-3.1-70B | 32 | 135 | 7.95 | 126 | 1,953 | 7.5 | 259 | 1 | memory |
 | Llama-3.1-70B | 64 | 135 | 12.38 | 81 | 2,190 | 8.9 | 247 | 0 | memory |
 | Llama-3.1-70B | 128 | 135 | 16.68 | 60 | 2,542 | 10.1 | 253 | 0 | array |
 | Llama-3.1-70B | 256 | 135 | 33.31 | 30 | 2,543 | 10.6 | 241 | 0 | array |
 | Mixtral-8x7B | 1 | 25 | 1.70 | 589 | 573 | 2.9 | 194 | 0 | memory |
 | Mixtral-8x7B | 8 | 25 | 4.12 | 243 | 1,774 | 8.3 | 213 | 3 | memory |
-| Mixtral-8x7B | 32 | 25 | 4.58 | 218 | 5,223 | 21.6 | 242 | 2 | memory |
-| Mixtral-8x7B | 64 | 25 | 5.48 | 182 | 7,457 | 30.1 | 248 | 1 | memory |
-| Mixtral-8x7B | 128 | 25 | 6.46 | 155 | 10,116 | 37.8 | 268 | 1 | memory |
+| Mixtral-8x7B | 32 | 25 | 4.45 | 225 | 5,337 | 21.0 | 254 | 3 | memory |
+| Mixtral-8x7B | 64 | 25 | 4.88 | 205 | 8,023 | 28.1 | 285 | 3 | memory |
+| Mixtral-8x7B | 128 | 25 | 6.23 | 161 | 10,309 | 36.0 | 287 | 2 | array |
 | Mixtral-8x7B | 256 | 25 | 9.05 | 110 | 11,941 | 43.0 | 277 | 1 | array |
 
 ## 3. Where the energy goes
@@ -57,15 +57,15 @@ Profile: 25 turns, 1200 tool-output tokens and 300 generated tokens per turn, 80
 
 | Model | KV policy | Agents | Decode B | Turns/s | Turn lat s | J/turn | gen tok/J | Avg W | Util | Limited by |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Llama-3.1-8B | recompute | 20 | 15 | 1.73 | 8.7 | 112 | 2.67 | 194 | 1.00 | compute (saturated) |
-| Llama-3.1-8B | hbm-cache | 38 | 15 | 7.74 | 1.9 | 24 | 12.57 | 185 | 1.00 | compute (saturated) |
-| Llama-3.1-8B | tiered-kv | 38 | 15 | 7.74 | 1.9 | 24 | 12.51 | 186 | 1.00 | compute (saturated) |
+| Llama-3.1-8B | recompute | 16 | 11 | 1.74 | 6.3 | 115 | 2.61 | 200 | 1.00 | compute (saturated) |
+| Llama-3.1-8B | hbm-cache | 53 | 27 | 8.54 | 3.2 | 25 | 12.12 | 211 | 1.00 | compute (saturated) |
+| Llama-3.1-8B | tiered-kv | 53 | 27 | 8.54 | 3.2 | 25 | 12.06 | 212 | 1.00 | compute (saturated) |
 | Llama-3.1-70B | recompute | 3 | 2 | 0.24 | 8.3 | 843 | 0.36 | 203 | 1.00 | latency SLO |
-| Llama-3.1-70B | hbm-cache | 10 | 6 | 1.40 | 4.3 | 140 | 2.15 | 195 | 1.00 | compute (saturated) |
-| Llama-3.1-70B | tiered-kv | 10 | 6 | 1.40 | 4.3 | 140 | 2.14 | 195 | 1.00 | compute (saturated) |
-| Mixtral-8x7B | recompute | 16 | 12 | 1.29 | 9.3 | 161 | 1.87 | 207 | 1.00 | latency SLO |
-| Mixtral-8x7B | hbm-cache | 80 | 59 | 7.11 | 8.3 | 28 | 10.66 | 200 | 1.00 | compute (saturated) |
-| Mixtral-8x7B | tiered-kv | 80 | 59 | 7.11 | 8.3 | 28 | 10.62 | 201 | 1.00 | compute (saturated) |
+| Llama-3.1-70B | hbm-cache | 13 | 8 | 1.54 | 5.2 | 138 | 2.17 | 213 | 1.00 | compute (saturated) |
+| Llama-3.1-70B | tiered-kv | 13 | 8 | 1.54 | 5.2 | 139 | 2.16 | 213 | 1.00 | compute (saturated) |
+| Mixtral-8x7B | recompute | 15 | 11 | 1.28 | 8.6 | 162 | 1.86 | 206 | 1.00 | compute (saturated) |
+| Mixtral-8x7B | hbm-cache | 86 | 64 | 7.20 | 8.9 | 30 | 9.92 | 218 | 1.00 | compute (saturated) |
+| Mixtral-8x7B | tiered-kv | 89 | 67 | 7.24 | 9.3 | 30 | 9.92 | 219 | 1.00 | compute (saturated) |
 
 ## 5. Agentic: research agent (long context, slow tools)
 
@@ -74,11 +74,11 @@ Profile: 40 turns, 3000 tool-output tokens per turn, 20.0s tool latency, final c
 | Model | KV policy | Agents | Decode B | Turns/s | Turn lat s | J/turn | gen tok/J | Avg W | Util | Limited by |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Llama-3.1-8B | recompute | 8 | 2 | 0.31 | 6.5 | 629 | 0.40 | 192 | 1.00 | compute (saturated) |
-| Llama-3.1-8B | hbm-cache | 30 | 1 | 1.47 | 0.5 | 103 | 2.43 | 152 | 0.71 | HBM capacity |
-| Llama-3.1-8B | tiered-kv | 49 | 2 | 2.33 | 0.9 | 83 | 3.02 | 193 | 1.00 | compute (saturated) |
+| Llama-3.1-8B | hbm-cache | 30 | 1 | 1.47 | 0.5 | 106 | 2.36 | 156 | 0.68 | HBM capacity |
+| Llama-3.1-8B | tiered-kv | 58 | 7 | 2.56 | 2.7 | 79 | 3.16 | 203 | 1.00 | compute (saturated) |
 | Llama-3.1-70B | recompute | 2 | 1 | 0.05 | 20.4 | 3994 | 0.06 | 195 | 1.00 | SLO missed even at B=1 |
 | Llama-3.1-70B | hbm-cache | 9 | 1 | 0.39 | 2.6 | 511 | 0.49 | 199 | 1.00 | HBM capacity |
-| Llama-3.1-70B | tiered-kv | 15 | 5 | 0.48 | 10.4 | 390 | 0.64 | 187 | 1.00 | compute (saturated) |
+| Llama-3.1-70B | tiered-kv | 13 | 3 | 0.48 | 6.3 | 415 | 0.60 | 199 | 1.00 | compute (saturated) |
 | Mixtral-8x7B | recompute | 8 | 3 | 0.25 | 12.0 | 795 | 0.31 | 198 | 1.00 | latency SLO |
 | Mixtral-8x7B | hbm-cache | 25 | 1 | 1.21 | 0.8 | 164 | 1.52 | 199 | 1.00 | HBM capacity |
 | Mixtral-8x7B | tiered-kv | 52 | 8 | 2.18 | 3.7 | 95 | 2.64 | 206 | 1.00 | compute (saturated) |
@@ -87,31 +87,31 @@ Profile: 40 turns, 3000 tool-output tokens per turn, 20.0s tool latency, final c
 
 | Variant | Chat 8B B=64 tok/J | Chat 70B B=64 tok/J | Coding agent 70B tok/J | Research agent 8B turns/s |
 |---|---|---|---|---|
-| baseline | 69.04 (1.00x) | 8.88 (1.00x) | 2.14 (1.00x) | 2.33 (1.00x) |
-| FP8 weights (no FP4) | 60.13 (0.87x) | 7.55 (0.85x) | 2.12 (0.99x) | 2.34 (1.00x) |
-| BF16 weights+compute+KV | 28.47 (0.41x) | doesn't fit | 0.61 (0.28x) | 1.33 (0.57x) |
-| BF16 KV cache | 57.38 (0.83x) | 8.29 (0.93x) | 1.77 (0.82x) | 1.47 (0.63x) |
-| no speculative decode | 65.79 (0.95x) | 8.88 (1.00x) | 1.81 (0.84x) | 2.01 (0.86x) |
-| narrow weight port (128 B/cyc) | 69.04 (1.00x) | 8.88 (1.00x) | 2.14 (1.00x) | 2.33 (1.00x) |
-| no LPDDR tier | 69.04 (1.00x) | 8.88 (1.00x) | 2.15 (1.00x) | 1.47 (0.63x) |
-| + FP4 KV cache | 75.84 (1.10x) | 9.26 (1.04x) | 2.21 (1.03x) | 2.62 (1.12x) |
-| + 512 GB LPDDR tier | 69.04 (1.00x) | 8.88 (1.00x) | 2.14 (1.00x) | 2.33 (1.00x) |
+| baseline | 69.04 (1.00x) | 8.88 (1.00x) | 2.16 (1.00x) | 2.56 (1.00x) |
+| FP8 weights (no FP4) | 57.96 (0.84x) | 7.55 (0.85x) | 2.12 (0.98x) | 2.50 (0.97x) |
+| BF16 weights+compute+KV | 27.31 (0.40x) | doesn't fit | doesn't fit | 1.33 (0.52x) |
+| BF16 KV cache | 52.41 (0.76x) | 8.29 (0.93x) | 1.93 (0.89x) | 1.47 (0.57x) |
+| no speculative decode | 65.79 (0.95x) | 8.88 (1.00x) | 1.81 (0.84x) | 2.01 (0.78x) |
+| narrow weight port (128 B/cyc) | 69.04 (1.00x) | 8.88 (1.00x) | 2.16 (1.00x) | 2.56 (1.00x) |
+| no LPDDR tier | 69.04 (1.00x) | 8.88 (1.00x) | 2.17 (1.00x) | 1.47 (0.57x) |
+| + FP4 KV cache | 75.84 (1.10x) | 9.26 (1.04x) | 2.38 (1.10x) | 2.88 (1.12x) |
+| + 512 GB LPDDR tier | 69.04 (1.00x) | 8.88 (1.00x) | 2.16 (1.00x) | 2.60 (1.01x) |
 
 ## 7. Design sweep: compute vs bandwidth (70B)
 
 | Tiles | FP8 TFLOPS | HBM TB/s | Chat 70B tok/J | Chat ms/token | Agent 70B turns/s | Agent tok/J | Agent avg W |
 |---|---|---|---|---|---|---|---|
-| 16 | 629 | 3.2 | 8.3 | 18.6 | 0.70 | 1.75 | 120 |
-| 16 | 629 | 4.8 | 8.3 | 16.7 | 0.70 | 1.70 | 123 |
-| 16 | 629 | 6.4 | 8.1 | 16.7 | 0.70 | 1.66 | 126 |
-| 16 | 629 | 8.0 | 7.9 | 16.7 | 0.70 | 1.62 | 130 |
-| 32 | 1258 | 3.2 | 8.6 | 13.7 | 1.40 | 2.27 | 184 |
-| 32 | 1258 | 4.8 | 8.8 | 12.4 | 1.40 | 2.12 | 197 |
-| 32 | 1258 | 6.4 | 8.9 | 9.3 | 1.40 | 2.09 | 201 |
-| 32 | 1258 | 8.0 | 8.9 | 8.4 | 1.40 | 1.98 | 212 |
-| 64 | 2517 | 3.2 | 8.3 | 13.7 | 2.51 | 2.65 | 284 |
-| 64 | 2517 | 4.8 | 8.8 | 9.2 | 2.79 | 2.60 | 322 |
-| 64 | 2517 | 6.4 | 9.0 | 6.9 | 2.79 | 2.39 | 350 |
-| 64 | 2517 | 8.0 | 9.1 | 7.4 | 2.79 | 2.32 | 361 |
+| 16 | 629 | 3.2 | 8.5 | 18.6 | 0.77 | 1.80 | 128 |
+| 16 | 629 | 4.8 | 8.6 | 16.7 | 0.85 | 1.67 | 153 |
+| 16 | 629 | 6.4 | 8.6 | 16.7 | 0.85 | 1.45 | 175 |
+| 16 | 629 | 8.0 | 8.6 | 16.7 | 0.85 | 1.34 | 190 |
+| 32 | 1258 | 3.2 | 8.6 | 13.7 | 1.43 | 2.30 | 186 |
+| 32 | 1258 | 4.8 | 8.9 | 12.4 | 1.54 | 2.16 | 213 |
+| 32 | 1258 | 6.4 | 9.1 | 9.3 | 1.63 | 2.03 | 241 |
+| 32 | 1258 | 8.0 | 9.2 | 8.4 | 1.70 | 1.92 | 266 |
+| 64 | 2517 | 3.2 | 7.1 | 12.3 | 2.51 | 2.56 | 294 |
+| 64 | 2517 | 4.8 | 8.1 | 8.5 | 2.79 | 2.55 | 328 |
+| 64 | 2517 | 6.4 | 8.9 | 6.9 | 3.05 | 2.55 | 358 |
+| 64 | 2517 | 8.0 | 9.0 | 6.2 | 3.07 | 2.39 | 385 |
 
 Policy definitions: **recompute**: No KV reuse: every turn re-prefills the whole session (shared prefix cached); **hbm-cache**: Session KV stays resident in HBM across tool calls; **tiered-kv**: KV parked in LPDDR during tool calls, restored by DMA before next turn

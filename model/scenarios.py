@@ -76,8 +76,8 @@ class AgentResult:
 def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, policy: str) -> AgentResult:
     if policy not in POLICIES:
         raise ValueError(policy)
-    if policy == "tiered-kv" and chip.lpddr_gb <= 0:
-        raise ValueError("tiered-kv needs an LPDDR tier")
+    if policy == "tiered-kv" and not chip.has_capacity_tier:
+        raise ValueError("tiered-kv needs HBM plus an LPDDR capacity tier")
     srv = replace(srv, spec_accept=prof.spec_accept) if srv.spec_k else srv
     kvb = model.kv_bytes_per_token(DTYPE_BYTES[srv.kv_dtype])
     e = chip.energy
@@ -98,7 +98,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
             park = (prof.gen_tokens + prof.tool_output_tokens) * kvb  # HBM -> LPDDR (incremental)
             xfer_lat += restore / chip.lpddr_bw
             moved = restore + park
-            xfer_j += moved * (e.lpddr_pj_per_byte + e.hbm_pj_per_byte) * 1e-12
+            xfer_j += moved * (e.lpddr_pj_per_byte + chip.main_pj) * 1e-12
     n = prof.turns
     pf_time, pf_j, xfer_lat, xfer_j = pf_time / n, pf_j / n, xfer_lat / n, xfer_j / n
 
@@ -106,7 +106,9 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
     ctx_session = sum(prof.ctx_at_turn(i) + prof.gen_tokens / 2 for i in range(n)) / n
     per_agent_gb = (ctx_session - prof.shared_prefix) * kvb / 1e9
     shared_gb = prof.shared_prefix * kvb / 1e9
-    free_hbm = chip.hbm_gb * 0.92 - weights_gb(model, srv) - shared_gb
+    w_gb = weights_gb(model, srv)
+    free_hbm = chip.main_gb * 0.92 - w_gb * (1 - chip.ddr_share) - shared_gb
+    lp_cap = chip.lpddr_gb - w_gb * chip.ddr_share      # LPDDR left for parked KV
     steps = math.ceil(prof.gen_tokens / srv.tokens_per_step())
     if free_hbm <= per_agent_gb:
         nan = float("nan")
@@ -136,7 +138,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
             fail = "latency SLO"
         elif hbm_need > free_hbm:
             fail = "HBM capacity"
-        elif lp_need > chip.lpddr_gb:
+        elif lp_need > lp_cap:
             fail = "LPDDR capacity"
         if fail:
             break
@@ -163,7 +165,7 @@ def run_agents(model: Model, chip: Chip, srv: Serving, prof: AgentProfile, polic
             cap = free_hbm / per_agent_gb
             agents = cap if policy == "hbm-cache" else cap * cycle / turn_lat
             if policy == "tiered-kv":
-                agents = min(agents, chip.lpddr_gb / per_agent_gb)
+                agents = min(agents, lp_cap / per_agent_gb)
             turns_per_s = agents / cycle
             util = turns_per_s * chip_time
 

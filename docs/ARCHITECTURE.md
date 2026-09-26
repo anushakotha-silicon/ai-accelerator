@@ -1,4 +1,4 @@
-# Inference accelerator: architecture spec (v0.2)
+# Inference accelerator: architecture spec (v0.3)
 
 Status: **phase 1: architecture + analytical model.** Every number below comes from
 `python3 -m model.run` (full tables in [`results/report.md`](../results/report.md)),
@@ -283,13 +283,61 @@ TPU's SparseCore); nothing on this chip is designed for that yet.
 
 ---
 
-## 11. Roadmap
+## 11. v0.3: decisions and memory strategy
+
+Full tables: [`results/memory_study.md`](../results/memory_study.md) (`python3 -m model.memory_study`),
+knob ranking in [`results/sensitivity.md`](../results/sensitivity.md).
+
+**Locked decisions**
+
+| Parameter | v0.3 value | Why (from the sensitivity study) |
+|---|---|---|
+| KV cache format | FP4 (MX) | Largest single knob: +8% tok/J, +9% perf. Needs an accuracy check per model. |
+| Scheduler speed tolerance | 10% | −25 W peak for −1.6% speed. At 2% the scheduler bought 8% speed with 16% more energy. |
+| Compute tiles | 48 | Tiles buy speed, not efficiency (±3% tok/J from 32 to 64). 48 fits the v0.1 die size. |
+| Main memory | HBM4, 4 stacks | Planned: 2048-bit × 8 Gb/s = 2.05 TB/s/stack → 8.2 TB/s, 192 GB, assumed 20 pJ/B |
+| DDR reuse | Hardware support for weight interleave across HBM + LPDDR, and HBM-less products | HBM is both the decode bottleneck and a supply risk |
+
+**Results vs v0.2** (7-workload suite, gmean · worst):
+
+| Product | Memory | tok/J | Perf | Peak W |
+|---|---|---|---|---|
+| **v0.3** | 4× HBM4 + 256 GB LPDDR tier | **1.28 · 1.05** | **1.26 · 1.04** | 242 |
+| v0.3, DDR share on | + ~6% of weights from LPDDR | 1.27 · 1.04 | 1.27 · 1.04 | 254 |
+| Half-HBM SKU | 2× HBM4 + 16-ch LPDDR, 21% weight share | 1.19 · 1.05 | 1.11 · 0.97 | 265 |
+| LPDDR-only SKU | 16-ch LPDDR, 1.09 TB/s, 512 GB, no HBM | 0.98 · 0.70 | 0.49 · 0.28 | 161 |
+
+**How DDR reuse works.** The DMA engines interleave each layer's weights
+across both memories in proportion to bandwidth (share = LPDDR BW / total BW), so
+both finish a weight sweep at the same moment. The same address map lets the
+controller run with HBM only, with a mix, or with LPDDR only.
+
+**What the numbers say:**
+1. **HBM4 is the biggest memory lever.** Cheaper bytes (20 vs 30 pJ/B) lift decode
+   efficiency by up to 38% and cut peak power by 33 W.
+2. **The DDR weight share buys speed, not efficiency.** LPDDR bytes cost 40 pJ against
+   HBM4's 20, so streaming weights from LPDDR adds 4–8% speed on memory-bound work
+   for ~1% tok/J. It's a runtime switch for latency-critical serving, off by default.
+3. **Halving the HBM still beats v0.2.** 2 HBM4 stacks plus wide LPDDR outperform v0.2's
+   4 HBM3E stacks on both efficiency and speed. That's the hedge if HBM supply is tight.
+4. **LPDDR-only matches v0.2's efficiency at half the speed** and 161 W, with 512 GB of
+   capacity. It's a fallback product, weakest on small-batch chat (0.28× speed).
+
+**Physical caveats.** One die supporting every SKU must carry both the HBM4
+PHYs and a 16-channel LPDDR PHY: ≈492 mm² instead of 469 mm². A die built for
+an interposer has microbumps too fine for an organic substrate, so the LPDDR-only
+product probably needs a fan-out package variant. Cost per SKU is not modelled yet.
+
+---
+
+## 12. Roadmap
 
 | Phase | Deliverable | Tools |
 |---|---|---|
 | 1 ✅ | This spec + analytical model | Python |
 | 1b ✅ | 3nm variant, DVFS + power gating, workload suite, resolve D3 (section 10) | Python |
-| 1c | Multi-chip (tensor-parallel 405B), cost per die, sparse-gather engine for recommendation models | Python |
+| 1c ✅ | v0.3 decisions, HBM4 plan, DDR reuse and HBM-less SKUs (section 11) | Python |
+| 1d | Multi-chip (tensor-parallel 405B), cost per die, sparse-gather engine for recommendation models | Python |
 | 2 (in progress) | RTL: 1 tile (systolic array + MX dequant + scratchpad + sequencer), testbench vs NumPy golden | SystemVerilog, Verilator, cocotb |
 | 3 | Synthesis area/power of the tile on an open PDK; recalibrate section 8 | Yosys, OpenROAD, SKY130/GF180 |
 | 4 | Multi-tile + NoC + RISC-V control core, run a real 1-layer transformer in simulation | Verilator, CVA6/Rocket |

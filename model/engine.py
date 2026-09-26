@@ -59,14 +59,15 @@ def _matmul_time(chip: Chip, srv: Serving, weight_params: float, m_tokens: float
 
 
 def _energy(chip: Chip, srv: Serving, *, array_macs=0.0, vec_macs=0.0, vec_ops=0.0,
-            hbm_bytes=0.0, act_bytes=0.0, time_s=0.0, array_busy=1.0) -> dict:
+            mem_bytes=0.0, ddr_bytes=0.0, act_bytes=0.0, time_s=0.0, array_busy=1.0) -> dict:
     e, n = chip.energy, chip.node
     pj = 1e-12
     v2 = chip.v_scale
     # Every DRAM byte is written into and read out of scratchpad once; array
     # operands are re-read from scratchpad once per array_dim of reuse.
-    sram_bytes = 2 * hbm_bytes + 3 * array_macs / chip.array_dim + vec_macs / 8
-    noc_bytes = (hbm_bytes + act_bytes) * chip.noc_hops
+    dram_bytes = mem_bytes + ddr_bytes
+    sram_bytes = 2 * dram_bytes + 3 * array_macs / chip.array_dim + vec_macs / 8
+    noc_bytes = (dram_bytes + act_bytes) * chip.noc_hops
     tile_static = chip.tile_static_w_at(chip.vdd, chip.clock_ghz)
     if chip.power_gating:
         # arrays are half of tile static; gate 80% of it while they are idle
@@ -77,7 +78,8 @@ def _energy(chip: Chip, srv: Serving, *, array_macs=0.0, vec_macs=0.0, vec_ops=0
         "vector": vec_ops * e.vec_op_pj * n.logic_energy * v2 * pj,
         "sram": sram_bytes * e.sram_pj_per_byte * n.sram_energy * v2 * pj,
         "noc": noc_bytes * e.noc_pj_per_byte_hop * n.wire_energy * v2 * pj,
-        "hbm": hbm_bytes * e.hbm_pj_per_byte * pj,
+        "mem": mem_bytes * chip.main_pj * pj,              # main memory (HBM, or LPDDR if no HBM)
+        "ddr": ddr_bytes * e.lpddr_pj_per_byte * pj,       # weight share streamed from LPDDR
         "static": (n.fixed_static_w + tile_static) * time_s,
     }
 
@@ -141,8 +143,9 @@ def _decode_at(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float) -
     weight_bytes = model.weight_params_touched(m) * DTYPE_BYTES[srv.weight_dtype]
     kv_read = batch * ctx * model.kv_bytes_per_token(DTYPE_BYTES[srv.kv_dtype])
     kv_write = m * model.kv_bytes_per_token(DTYPE_BYTES[srv.kv_dtype])
-    hbm_bytes = weight_bytes + kv_read + kv_write
-    t_mem = hbm_bytes / chip.hbm_bw
+    ddr_bytes = weight_bytes * chip.ddr_share
+    mem_bytes = weight_bytes - ddr_bytes + kv_read + kv_write
+    t_mem = max(mem_bytes / chip.main_bw, ddr_bytes / chip.lpddr_bw if ddr_bytes else 0.0)
 
     parts = {"memory": t_mem, "array": t_mm, "attention": t_attn + t_vec}
     bound = max(parts, key=parts.get)
@@ -150,7 +153,7 @@ def _decode_at(model: Model, chip: Chip, srv: Serving, batch: int, ctx: float) -
 
     act_bytes = model.layers * m * model.d_model * 4
     energy = _energy(chip, srv, array_macs=array_macs, vec_macs=vec_macs, vec_ops=vec_ops,
-                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
+                     mem_bytes=mem_bytes, ddr_bytes=ddr_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
     return Cost(t, energy, bound)
 
 
@@ -213,8 +216,9 @@ def _prefill_at(model: Model, chip: Chip, srv: Serving, new_tokens: int, past_ct
     weight_bytes = chunks * model.weight_params_touched(chunk) * DTYPE_BYTES[srv.weight_dtype]
     # each chunk re-reads the KV that precedes it (one layer at a time fits in SRAM)
     kv_read = sum((past_ctx + i * chunk) * kvb for i in range(chunks))
-    hbm_bytes = weight_bytes + kv_read + new_tokens * kvb
-    t_mem = hbm_bytes / chip.hbm_bw
+    ddr_bytes = weight_bytes * chip.ddr_share
+    mem_bytes = weight_bytes - ddr_bytes + kv_read + new_tokens * kvb
+    t_mem = max(mem_bytes / chip.main_bw, ddr_bytes / chip.lpddr_bw if ddr_bytes else 0.0)
 
     parts = {"memory": t_mem, "array": t_mm, "attention": t_vec}
     bound = max(parts, key=parts.get)
@@ -222,7 +226,7 @@ def _prefill_at(model: Model, chip: Chip, srv: Serving, new_tokens: int, past_ct
 
     act_bytes = model.layers * new_tokens * model.d_model * 4
     energy = _energy(chip, srv, array_macs=array_macs + attn_macs, vec_ops=vec_ops,
-                     hbm_bytes=hbm_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
+                     mem_bytes=mem_bytes, ddr_bytes=ddr_bytes, act_bytes=act_bytes, time_s=t, array_busy=t_mm / t)
     return Cost(t, energy, bound)
 
 
@@ -231,6 +235,6 @@ def weights_gb(model: Model, srv: Serving) -> float:
 
 
 def max_resident_seqs(model: Model, chip: Chip, srv: Serving, ctx: float, reserve: float = 0.08) -> int:
-    free = chip.hbm_gb * (1 - reserve) - weights_gb(model, srv)
+    free = chip.main_gb * (1 - reserve) - weights_gb(model, srv) * (1 - chip.ddr_share)
     per_seq = ctx * model.kv_bytes_per_token(DTYPE_BYTES[srv.kv_dtype]) / 1e9
     return max(0, int(free / per_seq))

@@ -43,7 +43,7 @@ Weights resident: 8B = 4.3 GB, 70B = 37.5 GB (MXFP4).
 
 ## 3. Where the energy goes
 
-| Case | mac | attn | vector | sram | noc | hbm | static | Total | Bound |
+| Case | mac | attn | vector | sram | noc | mem | static | Total | Bound |
 |---|---|---|---|---|---|---|---|---|---|
 | 8B decode, B=1 | 1% | 0% | 0% | 3% | 2% | 63% | 31% | 195.1 mJ | memory |
 | 8B decode, B=128 | 25% | 2% | 0% | 5% | 1% | 45% | 22% | 976.4 mJ | memory |

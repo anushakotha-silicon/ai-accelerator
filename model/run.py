@@ -74,7 +74,7 @@ def energy_breakdown() -> str:
         ("70B prefill 4k", lambda: prefill(LLAMA_70B, BASE_CHIP, BASE_SRV, 4096)),
         ("70B agent-turn prefill (1.2k new @ 26k ctx)", lambda: prefill(LLAMA_70B, BASE_CHIP, BASE_SRV, 1200, 26000)),
     ]
-    keys = ["mac", "attn", "vector", "sram", "noc", "hbm", "static"]
+    keys = ["mac", "attn", "vector", "sram", "noc", "mem", "static"]
     for name, fn in cases:
         c = fn()
         tot = c.total_j
@@ -88,7 +88,7 @@ def ablation_table() -> str:
     for name, chip, srv in ABLATIONS:
         c8 = serve_chat(LLAMA_8B, chip, srv, CHAT, 64)
         c70 = serve_chat(LLAMA_70B, chip, srv, CHAT, 64)
-        pol = "tiered-kv" if chip.lpddr_gb > 0 else "hbm-cache"
+        pol = "tiered-kv" if chip.has_capacity_tier else "hbm-cache"
         a70 = run_agents(LLAMA_70B, chip, srv, CODING, pol)
         ar = run_agents(LLAMA_8B, chip, srv, RESEARCH, pol)
         vals = (c8.tokens_per_j, c70.tokens_per_j, a70.gen_tokens_per_j, ar.turns_per_s)

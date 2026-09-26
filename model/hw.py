@@ -91,7 +91,11 @@ class Chip:
     dvfs: str = "off"                     # "off" | "efficiency" | "performance"
     power_gating: bool = False            # gate idle arrays (keeps SRAM retention)
     speed_slack: float = 0.02             # scheduler may be this much slower than the fastest option to save energy
-    hbm_stacks: int = 4
+    hbm_stacks: int = 4                   # 0 = LPDDR-only product (no HBM, no interposer)
+    hbm_gen: str = "HBM3E"
+    hbm_phy_scale: float = 1.0            # PHY area per stack vs HBM3E (HBM4's 2048-bit PHY is wider)
+    lpddr_phy_scale: float = 1.0          # 1.0 = 8 x64 LPDDR channels
+    weight_ddr_share: float = 0.0         # fraction of weight bytes streamed from LPDDR alongside HBM
 
     # derived ---------------------------------------------------------------
     @property
@@ -115,6 +119,38 @@ class Chip:
     @property
     def lpddr_bw(self) -> float:
         return self.lpddr_tbps * 1e12 * self.mem_eff
+
+    # "main memory" holds weights and the KV of running sequences: HBM when the
+    # product has stacks, otherwise LPDDR. A capacity tier exists only when both do.
+    @property
+    def has_hbm(self) -> bool:
+        return self.hbm_stacks > 0 and self.hbm_tbps > 0
+
+    @property
+    def has_capacity_tier(self) -> bool:
+        return self.has_hbm and self.lpddr_gb > 0
+
+    @property
+    def main_bw(self) -> float:
+        return self.hbm_bw if self.has_hbm else self.lpddr_bw
+
+    @property
+    def main_gb(self) -> float:
+        return self.hbm_gb if self.has_hbm else self.lpddr_gb
+
+    @property
+    def main_pj(self) -> float:
+        return self.energy.hbm_pj_per_byte if self.has_hbm else self.energy.lpddr_pj_per_byte
+
+    @property
+    def ddr_share(self) -> float:
+        """Fraction of weight bytes read from LPDDR in parallel with HBM."""
+        return self.weight_ddr_share if self.has_capacity_tier else 0.0
+
+    @property
+    def balanced_ddr_share(self) -> float:
+        """Split that makes HBM and LPDDR finish a weight sweep at the same time."""
+        return self.lpddr_bw / (self.hbm_bw + self.lpddr_bw)
 
     @property
     def sram_mb(self) -> float:
@@ -152,8 +188,8 @@ class Chip:
         tile = ((a["array"] + a["vector"] + a["router"]) * n.logic_area
                 + a["sram_per_mb"] * self.sram_mb_per_tile * n.sram_area
                 + a["tile_ws"] * (0.8 if n.logic_area < 1 else 1.0))
-        return (self.tiles * tile + a["hbm_phy"] * self.hbm_stacks
-                + (a["lpddr_phy"] if self.lpddr_gb > 0 else 0) + a["io"]
+        return (self.tiles * tile + a["hbm_phy"] * self.hbm_phy_scale * self.hbm_stacks
+                + (a["lpddr_phy"] * self.lpddr_phy_scale if self.lpddr_gb > 0 else 0) + a["io"]
                 + a["spine"] * n.logic_area + a["die_ws"] * (0.8 if n.logic_area < 1 else 1.0))
 
     @property

@@ -34,7 +34,7 @@ class TestEngine(unittest.TestCase):
     def test_decode_batch1_memory_bound_and_hbm_dominated(self):
         c = decode_step(LLAMA_8B, CHIP, Serving(), 1, 1024)
         self.assertEqual(c.bound, "memory")
-        self.assertGreater(c.energy["hbm"], 50 * c.energy["mac"])
+        self.assertGreater(c.energy["mem"], 50 * c.energy["mac"])
 
     def test_prefill_compute_bound(self):
         self.assertEqual(prefill(LLAMA_70B, CHIP, SRV, 4096).bound, "array")
@@ -112,6 +112,30 @@ class TestNodeAndPower(unittest.TestCase):
     def test_performance_policy_respects_tdp(self):
         chip = Chip(node=N3, tiles=64, dvfs="performance")
         self.assertLessEqual(prefill(LLAMA_70B, chip, SRV, 4096).power_w, chip.tdp_w)
+
+
+class TestMemorySystem(unittest.TestCase):
+    def setUp(self):
+        from model.memory_study import LP_ONLY, V03, V03_SHARE
+        self.v03, self.share, self.lp_only = V03, V03_SHARE, LP_ONLY
+
+    def test_balanced_ddr_share_equalises_sweep_time(self):
+        c = self.share
+        f = c.ddr_share
+        self.assertAlmostEqual((1 - f) / c.hbm_bw, f / c.lpddr_bw, places=18)
+
+    def test_ddr_share_trades_energy_for_speed_in_decode(self):
+        s = Serving(kv_dtype="fp4")
+        base = decode_step(LLAMA_8B, replace(self.v03, dvfs="off"), s, 8, 1280)
+        split = decode_step(LLAMA_8B, replace(self.share, dvfs="off"), s, 8, 1280)
+        self.assertLess(split.time_s, base.time_s)
+        self.assertGreater(split.energy["ddr"], 0)
+
+    def test_lpddr_only_product_serves_everything(self):
+        from model.study import evaluate
+        for r in evaluate(self.lp_only, Serving(spec_k=4, kv_dtype="fp4")):
+            self.assertTrue(r["ok"], r["name"])
+        self.assertFalse(self.lp_only.has_capacity_tier)
 
 
 if __name__ == "__main__":

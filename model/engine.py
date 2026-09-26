@@ -102,7 +102,7 @@ def _with_dvfs(chip: Chip, run) -> "Cost":
     if chip.dvfs == "performance":
         return min(under, key=lambda c: (round(c.time_s, 9), c.total_j))
     nominal = next(c for c in costs if c.opp == (V_NOM, F_NOM))
-    ok = [c for c in under if c.time_s <= 1.02 * nominal.time_s] or under
+    ok = [c for c in under if c.time_s <= (1 + chip.speed_slack) * nominal.time_s] or under
     return min(ok, key=lambda c: c.total_j)
 
 
@@ -180,7 +180,7 @@ def best_decode_step(model: Model, chip: Chip, srv: Serving, batch: int, ctx: fl
     else:
         nominal = [x[0] for x in pool if x[3].opp == (V_NOM, F_NOM)] or [x[0] for x in pool]
         ref = min(nominal)
-        best = min((x for x in pool if x[0] <= 1.02 * ref), key=lambda x: x[1])
+        best = min((x for x in pool if x[0] <= (1 + chip.speed_slack) * ref), key=lambda x: x[1])
     return best[2], best[3]
 
 

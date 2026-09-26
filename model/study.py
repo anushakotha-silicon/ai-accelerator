@@ -53,7 +53,8 @@ def evaluate(chip: Chip, srv: Serving = SRV) -> list:
             out.append(dict(name=name, eff=r.tokens_per_j, perf=r.tokens_per_s,
                             lat=f"{r.tpot_ms:.1f} ms/tok", power=r.avg_power_w, ok=r.feasible))
         else:
-            r = run_agents(model, chip, srv, prof, arg)
+            policy = arg if chip.lpddr_gb > 0 else "hbm-cache"   # no capacity tier: keep KV in HBM
+            r = run_agents(model, chip, srv, prof, policy)
             out.append(dict(name=name, eff=r.gen_tokens_per_j, perf=r.turns_per_s * prof.gen_tokens,
                             lat=f"{r.turn_latency_s:.1f} s/turn", power=r.avg_power_w,
                             ok=r.limiter != "weights don't fit"))

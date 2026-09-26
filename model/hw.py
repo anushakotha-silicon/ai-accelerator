@@ -90,6 +90,7 @@ class Chip:
     vdd: float = V_NOM                    # compute-rail voltage at the current operating point
     dvfs: str = "off"                     # "off" | "efficiency" | "performance"
     power_gating: bool = False            # gate idle arrays (keeps SRAM retention)
+    speed_slack: float = 0.02             # scheduler may be this much slower than the fastest option to save energy
     hbm_stacks: int = 4
 
     # derived ---------------------------------------------------------------

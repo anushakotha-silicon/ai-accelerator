@@ -16,7 +16,7 @@ BUILD  := build/n$(N)_l$(LANES)_m$(M)_b$(BLOCKS)_s$(SEED)
 RTL    := rtl/pe.sv rtl/systolic_array.sv
 CORE   := $(RTL) rtl/tile_core.sv
 
-.PHONY: sim sweep hazard regress core lint lint-core clean
+.PHONY: sim sweep hazard regress core kv lint lint-core lint-kv clean
 
 # one run: generate vectors, compile, simulate, print RESULT line
 sim:
@@ -45,6 +45,15 @@ core:
 	@python3 tb/gen_vectors.py --n $(N) --lanes $(LANES) --m $(M) --blocks $(BLOCKS) --seed $(SEED) --out $(BUILD)
 	@$(IVERILOG) -g2012 -I $(BUILD) -DVEC_DIR='"$(BUILD)"' -o $(BUILD)/core $(CORE) tb/tb_tile_core.sv
 	@$(VVP) -n $(BUILD)/core
+
+# agent KV manager: paging, park/restore, incremental parking, prefix sharing
+kv:
+	@mkdir -p build/kv
+	@$(IVERILOG) -g2012 -o build/kv/sim rtl/kv_manager.sv tb/tb_kv_manager.sv
+	@$(VVP) -n build/kv/sim
+
+lint-kv:
+	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module kv_manager rtl/kv_manager.sv
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module tile_core $(CORE)

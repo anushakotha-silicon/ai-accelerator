@@ -11,6 +11,7 @@ the cycle counts checked against the performance model in `model/engine.py`.
 | **M1** | Weight-stationary N×N systolic array, INT8×INT8→INT32, double-buffered weights with **wavefront loading** (`rtl/`) | Exact match vs golden; cycles/block = max(M, N/LANES); deliberate hazard fails |
 | M2 | FP8 (E4M3) activations × MXFP4 weights (E2M1 + E8M0 scale per 32), FP32 accumulate | Bit-exact vs a Python reference of the same rounding |
 | **M1-FPGA** | `rtl/tile_core.sv`: array + buffers + **hardware sequencer** + AXI-Lite; AWS F2 kit in `fpga/aws_f2/` | Bit-exact through AXI-Lite in sim; runs on F2 via `ia1_host.py` |
+| **A1** | `rtl/kv_manager.sv`: paged KV, HBM/DDR tiers, park/restore, incremental parking, prefix sharing | Multi-agent test: data intact, exact tokens moved, no leaks |
 | M3 | Scratchpad (16 banks × 256 KB), weight feeder at 256 B/cycle | Streams a full 70B layer's weights for one tile |
 | M4 | Attention/vector engine: QKᵀ dot products, online softmax (exp unit), RoPE, norms | Matches reference attention to FP32 tolerance |
 | M5 | Tile top-level + synthesis (Yosys/OpenROAD) → area and power to recalibrate `model/hw.py` | Phase 3 hand-off |
@@ -135,3 +136,46 @@ can only write registers can run the array:
 | `setup_cl.py` on a mock of AWS's `CL_TEMPLATE` | Patches all 8 OCL tie-offs, includes the hookup once, idempotent |
 
 Runbook: [`fpga/aws_f2/README.md`](../fpga/aws_f2/README.md). Needs an AWS account with F2 access.
+
+## A1: agent KV manager
+
+`rtl/kv_manager.sv` is the chip's KV/prefix manager and park/restore DMA in
+small form. HBM and DDR are local arrays here; on F2 they become the card's HBM and DDR.
+
+```
+page table [session][logical page] → { HBM page, DDR page, in_hbm, in_ddr, dirty, shared }
+free bitmaps for HBM and DDR pages · reference count per HBM page
+commands: ALLOC · WRITE · READ · PARK · RESTORE · FREE · SHARE
+```
+
+| Mechanism | Rule in hardware |
+|---|---|
+| Paging | A token's page is `tok / PAGE_TOK`; any free physical page can back any logical page, so memory never fragments |
+| Park | For each private resident page: if dirty or never copied, copy HBM→DDR; then free the HBM page. Shared pages stay pinned. |
+| Incremental parking | Restore keeps the DDR copy valid and marks the page clean; only pages written after that are copied at the next park |
+| Restore | Copy every non-resident page DDR→HBM into freshly allocated pages |
+| Prefix sharing | `SHARE` maps a source session's first n pages into an empty session, increments each page's reference count, and makes them read-only; the last `FREE` releases them |
+
+`make kv`: session 0 writes a 2-page system prompt, 7 agents share it, HBM holds
+32 pages, DDR 128. The scoreboard predicts the exact tokens every park and restore
+moves and checks every token after every round trip.
+
+| Result | |
+|---|---|
+| Checks / errors | 20,276 / 0; `make lint-kv` clean |
+| Prefix sharing | 7 agents use 2 HBM pages for the prompt instead of 16; writes to it are refused |
+| Capacity | Without parking, HBM fills after 5 of 7 agents (6 private pages each); with parking all 7 finish |
+| Incremental parking | 1,904 tokens written to DDR vs 8,400 for full-history parking: **4.41× less** in this short scenario; the gap grows with session length |
+| Leaks | Every HBM and DDR page back on the free list after all sessions free |
+
+The analytical model (`model/scenarios.py`, tiered-kv) makes the same assumptions:
+parking writes only the tokens added this turn, and restore reads the whole history.
+
+**Next agent-memory steps:**
+1. **Faster restore:** restore moves the full private history every turn (7,328 tokens
+   here). Restoring layer by layer, overlapped with the next prefill, hides most of it.
+2. **Hardware prefix detection:** a hash CAM that finds identical prompt pages
+   automatically, instead of the host calling `SHARE`.
+3. **On F2:** put `kv_manager` behind the tile's AXI-Lite map and back the two tiers
+   with the card's real HBM and DDR (AXI4 bursts), then measure park/restore
+   bandwidth on hardware.

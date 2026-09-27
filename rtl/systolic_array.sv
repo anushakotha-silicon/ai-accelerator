@@ -48,9 +48,13 @@ module systolic_array #(
   localparam int SW = 2 + RW + AW;        // skewed lane word: valid, buf, row, data
 
   // ---------------------------------------------------------------- buses
-  // horizontal: index r*(N+1) + c, c = 0..N (c = N is the right edge)
+  // horizontal: index r*(N+1) + c, c = 0..N (c = N is the right edge).
+  // Activations leaving the right edge are dropped by design; only the last
+  // row's valid is used (it times out_valid).
+  /* verilator lint_off UNUSEDSIGNAL */
   logic [N*(N+1)-1:0]      h_valid, h_buf;
   logic [N*(N+1)*AW-1:0]   h_act;
+  /* verilator lint_on UNUSEDSIGNAL */
   // vertical: index r*N + c, r = 0..N (r = 0 is the top, fed with zero)
   logic [(N+1)*N*ACCW-1:0] v_psum;
   // skewed weight lanes: index l*N + c

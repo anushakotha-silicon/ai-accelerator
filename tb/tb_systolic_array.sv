@@ -6,8 +6,9 @@
 // model and measures the steady-state cycles per block.
 //
 // +EARLY=k lets a lane start while the block two back still has k rows left to
-// present. k = 0 is the legal schedule; k >= 1 violates the contract and
-// should produce mismatches (proves the timing window is tight, not padded).
+// present. k = 0 is the tightest legal schedule (the lane starts on the cycle
+// the last row is presented); k >= 1 violates the contract and must produce
+// mismatches, which proves the window has no slack.
 `timescale 1ns/1ps
 module tb_systolic_array;
   `include "params.svh"
@@ -62,6 +63,11 @@ module tb_systolic_array;
     end
   end
 
+  function automatic bit lanes_busy();
+    for (int l = 0; l < LANES; l++) if (lane_active[l]) return 1;
+    return 0;
+  endfunction
+
   // ----------------------------------------------------------- sequencer
   initial begin
     real period;
@@ -80,23 +86,44 @@ module tb_systolic_array;
     repeat (3) @(posedge clk);
     rst_n = 1'b1;
 
-    while (next_issue < NB) begin
+    // run until every row is presented and every lane has finished its rows
+    while (next_issue < NB || lanes_busy()) begin
       @(negedge clk);
 
-      // 1. start a lane for the next block once its buffer's previous user
-      //    (two blocks back) has presented all but EARLY of its rows
-      for (int l = 0; l < LANES; l++) begin
-        if (!lane_active[l] && next_load < NB &&
-            (next_load < 2 || issued[next_load-2] >= M - early)) begin
-          lane_active[l] = 1;
-          lane_block[l]  = next_load;
-          lane_row[l]    = 0;
-          load_start[next_load] = cyc;
-          next_load = next_load + 1;
+      // 1. present the next activation row once its block's lane has started.
+      //    Done first so a lane may start on the very cycle the block two back
+      //    presents its last row: the tightest legal schedule (s0 = L).
+      if (next_issue < NB && load_start[next_issue] >= 0 && cyc >= load_start[next_issue] + 1) begin
+        if (issued[next_issue] == 0) issue_start[next_issue] = cyc;
+        in_valid = 1'b1;
+        in_buf   = next_issue % 2;
+        for (int k = 0; k < N; k++)
+          in_act[k*AW +: AW] = xmem[(next_issue*M + issued[next_issue])*N + k];
+        issued[next_issue] = issued[next_issue] + 1;
+        if (issued[next_issue] == M) next_issue = next_issue + 1;
+      end else begin
+        in_valid = 1'b0;
+        if (next_issue < NB) stalls = stalls + 1;
+      end
+      // 2. start a lane for the next block once its buffer's previous user
+      //    (two blocks back) has presented all but EARLY of its rows.
+      //    At most one lane starts per cycle: lanes advance one row per cycle,
+      //    so staggered starts guarantee two lanes never hit the same row.
+      begin : start_lane
+        for (int l = 0; l < LANES; l++) begin
+          if (!lane_active[l] && next_load < NB &&
+              (next_load < 2 || issued[next_load-2] >= M - early)) begin
+            lane_active[l] = 1;
+            lane_block[l]  = next_load;
+            lane_row[l]    = 0;
+            load_start[next_load] = cyc;
+            next_load = next_load + 1;
+            disable start_lane;
+          end
         end
       end
 
-      // 2. every active lane writes one row this cycle, rows in order
+      // 3. every active lane writes one row this cycle, rows in order
       wl_valid = '0;
       for (int l = 0; l < LANES; l++) begin
         if (lane_active[l]) begin
@@ -110,19 +137,6 @@ module tb_systolic_array;
         end
       end
 
-      // 3. present the next activation row once its block's lane has started
-      if (load_start[next_issue] >= 0 && cyc >= load_start[next_issue] + 1) begin
-        if (issued[next_issue] == 0) issue_start[next_issue] = cyc;
-        in_valid = 1'b1;
-        in_buf   = next_issue % 2;
-        for (int k = 0; k < N; k++)
-          in_act[k*AW +: AW] = xmem[(next_issue*M + issued[next_issue])*N + k];
-        issued[next_issue] = issued[next_issue] + 1;
-        if (issued[next_issue] == M) next_issue = next_issue + 1;
-      end else begin
-        in_valid = 1'b0;
-        stalls = stalls + 1;
-      end
       cyc = cyc + 1;
     end
 

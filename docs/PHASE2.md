@@ -88,5 +88,25 @@ make hazard         # contract violation → expect MISMATCH
 make lint           # Verilator lint
 ```
 
-**Status:** RTL, golden model and testbench are written but **not yet
-simulated**. No HDL simulator is installed on this machine yet.
+**Status: M1 verified** (Icarus Verilog 13.0, Verilator 5.052 lint, built from source
+into `~/.local/eda/bin`).
+
+| Check | Result |
+|---|---|
+| `make lint` (Verilator `-Wall`) | Clean; one documented waiver (activations leaving the right edge) |
+| `make regress`: N ∈ {8, 16, 32}, LANES ∈ {1, 2, 4}, M from 1 to 2N | Bit-exact vs golden in every run |
+| Cycles per block | = max(M, N/LANES) in steady state (e.g. 4.00, 8.00, 16.00, 32.00) |
+| `make hazard` (lane starts one cycle early) | Fails on the last row of the old block, as predicted |
+
+What the first simulations taught us:
+1. **Lanes must start on different cycles.** Two lanes that start together walk
+   the same rows in lockstep, so one of their writes is lost. Staggered starts
+   keep lanes at least one row apart forever, because all lanes move at one row
+   per cycle. The hardware sequencer enforces one lane start per cycle.
+2. **The legal window is exactly s₀ ≥ L.** A lane may start on the cycle the old
+   block presents its last row: each PE reads the old weight and the new weight
+   is written on the same edge, and nonblocking assignment keeps the read on the
+   old value. Starting one cycle earlier corrupts that last row.
+3. **Short runs look faster than the model** when lanes are the limit (3.00 vs 4
+   cycles/block with 8 blocks), because all lanes are free at start-up. With 40
+   blocks the average converges (3.84 → 4).

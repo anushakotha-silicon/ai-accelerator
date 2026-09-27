@@ -10,7 +10,8 @@ the cycle counts checked against the performance model in `model/engine.py`.
 |---|---|---|
 | **M1** | Weight-stationary N×N systolic array, INT8×INT8→INT32, double-buffered weights with **wavefront loading** (`rtl/`) | Exact match vs golden; cycles/block = max(M, N/LANES); deliberate hazard fails |
 | M2 | FP8 (E4M3) activations × MXFP4 weights (E2M1 + E8M0 scale per 32), FP32 accumulate | Bit-exact vs a Python reference of the same rounding |
-| M3 | Scratchpad (16 banks × 256 KB), weight feeder at 256 B/cycle, tile sequencer that issues the lane schedule | Streams a full 70B layer's weights for one tile |
+| **M1-FPGA** | `rtl/tile_core.sv`: array + buffers + **hardware sequencer** + AXI-Lite; AWS F2 kit in `fpga/aws_f2/` | Bit-exact through AXI-Lite in sim; runs on F2 via `ia1_host.py` |
+| M3 | Scratchpad (16 banks × 256 KB), weight feeder at 256 B/cycle | Streams a full 70B layer's weights for one tile |
 | M4 | Attention/vector engine: QKᵀ dot products, online softmax (exp unit), RoPE, norms | Matches reference attention to FP32 tolerance |
 | M5 | Tile top-level + synthesis (Yosys/OpenROAD) → area and power to recalibrate `model/hw.py` | Phase 3 hand-off |
 
@@ -110,3 +111,27 @@ What the first simulations taught us:
 3. **Short runs look faster than the model** when lanes are the limit (3.00 vs 4
    cycles/block with 8 blocks), because all lanes are free at start-up. With 40
    blocks the average converges (3.84 → 4).
+
+## M1-FPGA: tile core for AWS F2
+
+`rtl/tile_core.sv` turns the testbench's schedule into hardware, so a host that
+can only write registers can run the array:
+
+- **Sequencer:** each cycle, (1) present the next activation row if its block's lane
+  started on an earlier cycle, (2) start at most one lane, once the block two back
+  has presented its last row (that cycle counts, s₀ = L), (3) advance every lane one row.
+- **Buffers:** weights (16 blocks × N rows), activations and outputs (16 × 64 rows).
+  Reads are registered, so every array input comes from a flop one stage after the
+  sequencer's decision. That keeps the schedule and gives the FPGA timing slack.
+- **AXI4-Lite** register map (top of the file): the F2 OCL/BAR0 port. Counters
+  `BLK1_START` and `LAST_START` let the host compute cycles/block exactly as the
+  simulations do.
+
+| Check | Result |
+|---|---|
+| `make core` (N = 8/16/32, LANES = 2/4, M = 1…40), all through AXI-Lite | Bit-exact; cycles/block = model (4, 8, 16, 40…) |
+| `make lint-core` | Clean (unused high address bits waived: the BAR aliases above 16 MiB) |
+| `ocl_hookup.inc` inside a stand-in CL with the shell's exact OCL port names | Lint clean at N = 32 |
+| `setup_cl.py` on a mock of AWS's `CL_TEMPLATE` | Patches all 8 OCL tie-offs, includes the hookup once, idempotent |
+
+Runbook: [`fpga/aws_f2/README.md`](../fpga/aws_f2/README.md). Needs an AWS account with F2 access.

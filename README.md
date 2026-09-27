@@ -17,7 +17,8 @@ that justifies every block before any RTL gets written.
 | [results/memory_study.md](results/memory_study.md) | v0.3: HBM4, LPDDR weight sharing, half-HBM and LPDDR-only products |
 | [docs/package-3d.html](docs/package-3d.html) | Interactive 3D package and floorplan, v0.1 and v0.2 (open in a browser) |
 | [docs/PHASE2.md](docs/PHASE2.md) | Tile RTL plan and the systolic-array design notes |
-| `rtl/`, `tb/`, `Makefile` | Phase 2 RTL: systolic array with wavefront weight loading, golden model, testbench |
+| `rtl/`, `tb/`, `Makefile` | Phase 2 RTL: systolic array with wavefront weight loading, tile core with hardware sequencer, golden model, testbenches |
+| [fpga/aws_f2/](fpga/aws_f2/README.md) | Build and run the tile on an AWS F2 FPGA |
 | `model/hw.py` | Chip config + energy table (every assumption lives here) |
 | `model/workloads.py` | Llama-3.1 8B/70B, Mixtral 8x7B, chat and agent profiles |
 | `model/engine.py` | Cost of one decode step / one prefill: time, bound, energy by component |

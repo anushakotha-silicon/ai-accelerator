@@ -10,6 +10,9 @@
 // the last row is presented); k >= 1 violates the contract and must produce
 // mismatches, which proves the window has no slack.
 `timescale 1ns/1ps
+`ifndef VEC_DIR
+  `define VEC_DIR "build"
+`endif
 module tb_systolic_array;
   `include "params.svh"
   localparam int AW   = 8;
@@ -72,9 +75,9 @@ module tb_systolic_array;
   initial begin
     real period;
     integer model_period;
-    $readmemh("build/weights.hex", wmem);
-    $readmemh("build/acts.hex", xmem);
-    $readmemh("build/expected.hex", ymem);
+    $readmemh({`VEC_DIR, "/weights.hex"}, wmem);
+    $readmemh({`VEC_DIR, "/acts.hex"}, xmem);
+    $readmemh({`VEC_DIR, "/expected.hex"}, ymem);
     if (!$value$plusargs("EARLY=%d", early)) early = 0;
 
     for (int i = 0; i < LANES; i++) lane_active[i] = 0;

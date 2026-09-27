@@ -11,16 +11,18 @@ M      ?= 4
 BLOCKS ?= 8
 SEED   ?= 1
 EARLY  ?= 0
-BUILD  := build
+# one directory per configuration, so parallel or background runs never share vectors
+BUILD  := build/n$(N)_l$(LANES)_m$(M)_b$(BLOCKS)_s$(SEED)
 RTL    := rtl/pe.sv rtl/systolic_array.sv
+CORE   := $(RTL) rtl/tile_core.sv
 
-.PHONY: sim sweep hazard regress lint clean
+.PHONY: sim sweep hazard regress core lint lint-core clean
 
 # one run: generate vectors, compile, simulate, print RESULT line
 sim:
 	@mkdir -p $(BUILD)
 	@python3 tb/gen_vectors.py --n $(N) --lanes $(LANES) --m $(M) --blocks $(BLOCKS) --seed $(SEED) --out $(BUILD)
-	@$(IVERILOG) -g2012 -I $(BUILD) -o $(BUILD)/sim $(RTL) tb/tb_systolic_array.sv
+	@$(IVERILOG) -g2012 -I $(BUILD) -DVEC_DIR='"$(BUILD)"' -o $(BUILD)/sim $(RTL) tb/tb_systolic_array.sv
 	@$(VVP) -n $(BUILD)/sim +EARLY=$(EARLY)
 
 # cycles per block vs the model's max(M, N/LANES), across block sizes
@@ -37,8 +39,18 @@ regress:
 	  for m in 1 3 $$((n/l)) $$((2*n)); do \
 	    $(MAKE) --no-print-directory sim N=$$n LANES=$$l M=$$m BLOCKS=16 SEED=$$((m+n)) | grep RESULT; done; done
 
+# tile_core end to end through AXI-Lite (the FPGA-facing block)
+core:
+	@mkdir -p $(BUILD)
+	@python3 tb/gen_vectors.py --n $(N) --lanes $(LANES) --m $(M) --blocks $(BLOCKS) --seed $(SEED) --out $(BUILD)
+	@$(IVERILOG) -g2012 -I $(BUILD) -DVEC_DIR='"$(BUILD)"' -o $(BUILD)/core $(CORE) tb/tb_tile_core.sv
+	@$(VVP) -n $(BUILD)/core
+
+lint-core:
+	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module tile_core $(CORE)
+
 lint:
 	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module systolic_array $(RTL)
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf build

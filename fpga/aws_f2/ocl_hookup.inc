@@ -1,4 +1,5 @@
-// IA-1 tile core on the AWS F2 OCL (AppPF BAR0, AXI4-Lite) port.
+// IA-1 FPGA top on the AWS F2 OCL (AppPF BAR0, AXI4-Lite) port:
+// tile core at 0x000000, agent KV manager at 0x400000 (rtl/ia1_top.sv).
 // Included inside the CL module by setup_cl.py (.inc: the extension the
 // shell's encrypt.tcl copies and encrypts with the design sources), in place of the template's
 // OCL tie-offs. Signal names follow hdk/common/shell_stable/design/interfaces/cl_ports.vh.
@@ -7,12 +8,17 @@
 // N = 64 also fits). Clock: clk_main_a0 from the shell's clock recipe.
 // ocl_cl_wstrb is unused: the core only accepts full 32-bit writes.
 
-tile_core #(
-  .N          (32),
-  .LANES      (2),
-  .MAX_BLOCKS (16),
-  .MAX_M      (64)
-) u_ia1_tile (
+ia1_top #(
+  .N           (32),
+  .LANES       (2),
+  .MAX_BLOCKS  (16),
+  .MAX_M       (64),
+  .KV_S        (8),
+  .KV_P        (16),
+  .KV_PAGE_TOK (16),
+  .KV_H        (32),
+  .KV_D        (128)
+) u_ia1 (
   .clk       (clk_main_a0),
   .rst_n     (rst_main_n),
   .s_awaddr  (ocl_cl_awaddr),

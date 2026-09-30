@@ -12,6 +12,7 @@ the cycle counts checked against the performance model in `model/engine.py`.
 | M2 | FP8 (E4M3) activations × MXFP4 weights (E2M1 + E8M0 scale per 32), FP32 accumulate | Bit-exact vs a Python reference of the same rounding |
 | **M1-FPGA** | `rtl/tile_core.sv`: array + buffers + **hardware sequencer** + AXI-Lite; AWS F2 kit in `fpga/aws_f2/` | Bit-exact through AXI-Lite in sim; runs on F2 via `ia1_host.py` |
 | **A1** | `rtl/kv_manager.sv`: paged KV, HBM/DDR tiers, park/restore, incremental parking, prefix sharing | Multi-agent test: data intact, exact tokens moved, no leaks |
+| **A1-FPGA** | `rtl/ia1_top.sv`: AXI-Lite router + tile_core + `kv_axil` (KV registers, per-command cycle counter) | Matmul + agents through one port; F2 host `kv_host.py` |
 | M3 | Scratchpad (16 banks × 256 KB), weight feeder at 256 B/cycle | Streams a full 70B layer's weights for one tile |
 | M4 | Attention/vector engine: QKᵀ dot products, online softmax (exp unit), RoPE, norms | Matches reference attention to FP32 tolerance |
 | M5 | Tile top-level + synthesis (Yosys/OpenROAD) → area and power to recalibrate `model/hw.py` | Phase 3 hand-off |
@@ -176,6 +177,20 @@ parking writes only the tokens added this turn, and restore reads the whole hist
    here). Restoring layer by layer, overlapped with the next prefill, hides most of it.
 2. **Hardware prefix detection:** a hash CAM that finds identical prompt pages
    automatically, instead of the host calling `SHARE`.
-3. **On F2:** put `kv_manager` behind the tile's AXI-Lite map and back the two tiers
-   with the card's real HBM and DDR (AXI4 bursts), then measure park/restore
-   bandwidth on hardware.
+3. **On F2:** back the two tiers with the card's real HBM and DDR (AXI4 bursts),
+   then measure park/restore bandwidth on hardware.
+
+## A1-FPGA: KV manager on the FPGA path
+
+`rtl/ia1_top.sv` puts both blocks behind the F2 OCL port. `axil_split2` routes by
+address bit 22 (tile below 0x400000, KV above), so every tile address is unchanged.
+`kv_axil` turns register writes into KV commands (map at the top of the file) and
+counts the cycles each command takes, so park/restore latency is measured by hardware.
+
+| Check | Result |
+|---|---|
+| `make top` (routing, tile matmul, 4 agents × 3 turns through one AXI-Lite port) | 1,966 checks, 0 errors |
+| Park / restore cost in hardware cycles | 1.26 / 1.31 cycles per token (1 token per cycle plus page-table walk) |
+| `make lint-top` (full top at N = 32) | Clean |
+| `setup_cl.py` + hookup | 7 RTL files copied; `ia1_top` lints against the shell's OCL port names |
+| Host programs with `--fake` | `ia1_host.py` bit-exact; `kv_host.py` 1,877 and 5,224 checks, 0 errors; token counts match the RTL |

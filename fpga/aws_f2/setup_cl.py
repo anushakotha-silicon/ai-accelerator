@@ -27,7 +27,7 @@ import sys
 CL = "cl_ia1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-RTL = ["pe.sv", "systolic_array.sv", "tile_core.sv"]
+RTL = ["pe.sv", "systolic_array.sv", "tile_core.sv", "kv_manager.sv", "kv_axil.sv", "axil_split2.sv", "ia1_top.sv"]
 
 MANUAL = f"""
 Manual edit: in hdk/cl/examples/{CL}/design/{CL}.sv, delete or comment out every
@@ -72,7 +72,7 @@ def main():
         n = len(tie.findall(src))
         if n == 0:
             die("no cl_ocl_* tie-offs found in the CL top")
-        src = tie.sub(lambda m: f"{m.group(1)}// IA-1: driven by tile_core  {m.group(2)}", src)
+        src = tie.sub(lambda m: f"{m.group(1)}// IA-1: driven by ia1_top  {m.group(2)}", src)
         idx = src.rfind("endmodule")
         if idx < 0:
             die("no endmodule in the CL top")

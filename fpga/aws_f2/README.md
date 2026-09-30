@@ -1,17 +1,21 @@
 # IA-1 tile on AWS F2
 
-Runs the verified tile core (`rtl/tile_core.sv`: 32×32 INT8 systolic array,
-wavefront weight loading, hardware sequencer) on an AWS EC2 F2 FPGA, and checks
-it against the same golden model the simulations use.
+Runs the IA-1 FPGA top (`rtl/ia1_top.sv`) on an AWS EC2 F2 FPGA: the tile core
+(32×32 INT8 systolic array, wavefront weight loading, hardware sequencer) and the
+agent KV manager (paging, park/restore, incremental parking, prefix sharing),
+both behind the shell's OCL AXI-Lite port, checked against the same golden
+models and scoreboards the simulations use.
 
 ```
-host (F2 instance) ── PCIe BAR0 ── AWS Small Shell ── OCL AXI-Lite ── tile_core
-  ia1_host.py                                          ocl_hookup.inc    buffers + sequencer + array
+host (F2 instance) ── PCIe BAR0 ── AWS Small Shell ── OCL AXI-Lite ── ia1_top ─┬─ tile_core  (0x000000)
+  ia1_host.py, kv_host.py                             ocl_hookup.inc         └─ kv_manager (0x400000)
 ```
 
-Everything here was verified locally before any AWS spend:
-`make core` passes bit-exact across N = 8/16/32, the hookup lints cleanly against
-the shell's port names, and `setup_cl.py` was tested on a mock of AWS's template.
+Everything here was verified locally before any AWS spend: `make top` runs a
+matmul and a multi-agent KV scenario through the single AXI-Lite port (1,966
+checks, 0 errors); `make lint-top` is clean; the hookup lints against the shell's
+port names; `setup_cl.py` was tested on a mock of AWS's template; and both host
+programs pass end to end with `--fake` (a software stand-in for BAR0).
 **Not yet verified:** Vivado synthesis, timing closure and real hardware. Those need AWS.
 
 ## What you need
@@ -66,13 +70,27 @@ sudo fpga-load-local-image -S 0 -I <agfi-id>
 git clone https://github.com/anushakotha-silicon/ai-accelerator.git ~/ai-accelerator
 sudo python3 ~/ai-accelerator/fpga/aws_f2/host/ia1_host.py --slot 0 --m 4 --blocks 12
 sudo python3 ~/ai-accelerator/fpga/aws_f2/host/ia1_host.py --slot 0 --m 1 --blocks 16   # decode-like
+sudo python3 ~/ai-accelerator/fpga/aws_f2/host/kv_host.py --slot 0 --agents 4 --turns 3   # agent memory
+```
+
+Try the host programs locally first, without an FPGA:
+
+```bash
+python3 fpga/aws_f2/host/ia1_host.py --fake --m 4 --blocks 12
+python3 fpga/aws_f2/host/kv_host.py --fake --agents 4 --turns 3
 ```
 
 Expected, matching simulation:
 
 ```
 RESULT fpga N=32 LANES=2 M=4 blocks=12 | cycles=... | cycles/block measured=16.00 model=16 | errors=0 | PASS
+park    : 384 tokens, ~484 cycles (~1.26 cycles/token), host wall time ... us/token incl. PCIe
+RESULT fpga-kv agents=4 turns=3 | checks=1877 errors=0 | PASS
 ```
+
+KV cycle counts come from the hardware (`KV_CYCLES`): about one cycle per token
+copied plus page-table overhead. Host wall time is dominated by PCIe round trips,
+since every register access crosses the bus.
 
 ## What the FPGA run proves, and what it doesn't
 
@@ -88,9 +106,10 @@ RESULT fpga N=32 LANES=2 M=4 blocks=12 | cycles=... | cycles/block measured=16.0
    (512-bit AXI4 bursts), so large runs aren't limited by the host.
 2. **Card memory:** stream weights from the F2 card's HBM through the wavefront
    lanes, like the real chip streams from HBM.
-3. **Agent-memory proof:** KV page table plus park/restore between the card's HBM
-   (the fast tier) and DDR (the capacity tier). That's the differentiated block
-   from the business plan, measured on hardware.
+3. **Real memory tiers for the KV manager:** today the two tiers are on-chip
+   arrays. Backing them with the card's HBM (fast tier) and DDR (capacity tier)
+   through AXI4 bursts measures park/restore bandwidth on real memory. The host
+   interface stays the same.
 
 If timing fails at the default clock: the array is local (neighbour-to-neighbour),
 so the likely critical paths are the buffer reads (wide rows from BRAM/URAM) and

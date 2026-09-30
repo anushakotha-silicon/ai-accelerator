@@ -15,8 +15,9 @@ EARLY  ?= 0
 BUILD  := build/n$(N)_l$(LANES)_m$(M)_b$(BLOCKS)_s$(SEED)
 RTL    := rtl/pe.sv rtl/systolic_array.sv
 CORE   := $(RTL) rtl/tile_core.sv
+TOP    := $(CORE) rtl/kv_manager.sv rtl/kv_axil.sv rtl/axil_split2.sv rtl/ia1_top.sv
 
-.PHONY: sim sweep hazard regress core kv lint lint-core lint-kv clean
+.PHONY: sim sweep hazard regress core kv top lint lint-core lint-kv lint-top clean
 
 # one run: generate vectors, compile, simulate, print RESULT line
 sim:
@@ -51,6 +52,16 @@ kv:
 	@mkdir -p build/kv
 	@$(IVERILOG) -g2012 -o build/kv/sim rtl/kv_manager.sv tb/tb_kv_manager.sv
 	@$(VVP) -n build/kv/sim
+
+# FPGA top: router + tile_core + KV manager, all through one AXI-Lite port
+top:
+	@mkdir -p $(BUILD)
+	@python3 tb/gen_vectors.py --n $(N) --lanes $(LANES) --m $(M) --blocks $(BLOCKS) --seed $(SEED) --out $(BUILD)
+	@$(IVERILOG) -g2012 -I $(BUILD) -DVEC_DIR='"$(BUILD)"' -o $(BUILD)/top $(TOP) tb/tb_ia1_top.sv
+	@$(VVP) -n $(BUILD)/top
+
+lint-top:
+	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module ia1_top $(TOP)
 
 lint-kv:
 	$(VERILATOR) --lint-only -Wall -Wno-DECLFILENAME --top-module kv_manager rtl/kv_manager.sv

@@ -10,8 +10,6 @@ device's resource0 file, so it needs only the Python standard library and root.
 The register map is documented at the top of rtl/tile_core.sv.
 """
 import argparse
-import glob
-import mmap
 import os
 import sys
 import time
@@ -19,39 +17,11 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tb"))
 from gen_vectors import generate  # noqa: E402  (same golden model as simulation)
 
-AMAZON_VENDOR = 0x1D0F
-BAR0_SIZE = 64 << 20
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bar import Bar, find_bar0  # noqa: E402
+
 ID, CTRL, STATUS, NUM_BLOCKS, ROWS, CYCLES, STALLS, BLK1, LAST, PARAMS = range(0, 0x28, 4)
 WBUF, ABUF, OBUF = 0x100000, 0x200000, 0x300000
-
-
-def find_bar0(slot):
-    """Resource0 files of Amazon FPGA functions exposing a 64 MiB BAR0 (the AppPF)."""
-    devs = []
-    for d in sorted(glob.glob("/sys/bus/pci/devices/*")):
-        try:
-            vendor = int(open(os.path.join(d, "vendor")).read(), 16)
-        except OSError:
-            continue
-        res0 = os.path.join(d, "resource0")
-        if vendor == AMAZON_VENDOR and os.path.exists(res0) and os.path.getsize(res0) == BAR0_SIZE:
-            devs.append(res0)
-    if slot >= len(devs):
-        sys.exit(f"no F2 AppPF BAR0 for slot {slot}; found {devs}. Is the AFI loaded?")
-    return devs[slot]
-
-
-class Bar:
-    def __init__(self, path):
-        self.fd = os.open(path, os.O_RDWR | os.O_SYNC)
-        self.mm = mmap.mmap(self.fd, BAR0_SIZE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
-        self.w = memoryview(self.mm).cast("I")          # 32-bit accesses only
-
-    def peek(self, addr):
-        return self.w[addr >> 2]
-
-    def poke(self, addr, value):
-        self.w[addr >> 2] = value & 0xFFFFFFFF
 
 
 def pack_row(vals):
@@ -70,12 +40,17 @@ def s32(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--slot", type=int, default=0)
+    ap.add_argument("--fake", action="store_true", help="run against fake_bar.py instead of an FPGA")
     ap.add_argument("--m", type=int, default=4, help="rows (tokens) per weight block")
     ap.add_argument("--blocks", type=int, default=12)
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
 
-    bar = Bar(find_bar0(a.slot))
+    if a.fake:
+        from fake_bar import FakeBar
+        bar = FakeBar()
+    else:
+        bar = Bar(find_bar0(a.slot))
     ident = bar.peek(ID)
     if ident != 0x1A1C0001:
         sys.exit(f"unexpected ID {ident:#010x}: is the cl_ia1 AFI loaded in slot {a.slot}?")
